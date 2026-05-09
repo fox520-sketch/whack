@@ -2,13 +2,13 @@
 // 2. databaseURL 很重要：多人房間會使用 Realtime Database。
 // 3. Firebase API key 可以放在前端；真正的保護請靠 Security Rules 與 App Check。
 export const firebaseConfig = {
-  apiKey: 'PASTE_YOUR_API_KEY_HERE',
-  authDomain: 'PASTE_YOUR_PROJECT_ID.firebaseapp.com',
-  databaseURL: 'https://PASTE_YOUR_PROJECT_ID-default-rtdb.firebaseio.com',
-  projectId: 'PASTE_YOUR_PROJECT_ID',
-  storageBucket: 'PASTE_YOUR_PROJECT_ID.appspot.com',
-  messagingSenderId: 'PASTE_YOUR_SENDER_ID',
-  appId: 'PASTE_YOUR_APP_ID'
+  apiKey: "AIzaSyDnNybBa7asOKJ_EZh8_ga2NmDP_fViRqs",
+  authDomain: "ocean-whack-a-mole-firebase.firebaseapp.com",
+  databaseURL: "https://ocean-whack-a-mole-firebase-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "ocean-whack-a-mole-firebase",
+  storageBucket: "ocean-whack-a-mole-firebase.firebasestorage.app",
+  messagingSenderId: "631546730141",
+  appId: "1:631546730141:web:22aeb9a7bb6fadf2c2e674"
 };
 
 export function hasFirebaseConfig() {
