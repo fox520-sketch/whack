@@ -269,6 +269,7 @@ function getSelectedMoleVisual() {
 
 function buildBoard(size) {
   state.boardSize = size;
+  els.gameBoard.dataset.boardSize = String(size);
   els.gameBoard.innerHTML = '';
   for (let i = 0; i < size; i += 1) {
     const node = els.holeTemplate.content.firstElementChild.cloneNode(true);
