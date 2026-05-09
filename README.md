@@ -1,4 +1,4 @@
-# 海洋打地鼠 Firebase 多人合作版
+# 鼠叔出沒 Firebase 多人合作版
 
 這是一個可部署到 GitHub Pages 的靜態網頁遊戲。多人功能使用 Firebase Authentication 匿名登入與 Realtime Database 即時同步，不需要 Node.js 伺服器。
 
