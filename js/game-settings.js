@@ -11,6 +11,39 @@ export const THEMES = [
   { id: 'neon', label: '霓虹風', emoji: '⚡' }
 ];
 
+export const MOLE_VISUALS = [
+  { id: 'hamster', label: '經典地鼠', emoji: '🐹' },
+  { id: 'otter', label: '小水獺', emoji: '🦦' },
+  { id: 'octopus', label: '章魚', emoji: '🐙' },
+  { id: 'crab', label: '螃蟹', emoji: '🦀' },
+  { id: 'puffer', label: '河豚', emoji: '🐡' },
+  { id: 'seal', label: '海豹', emoji: '🦭' },
+  { id: 'dolphin', label: '海豚', emoji: '🐬' },
+  { id: 'shark', label: '鯊魚', emoji: '🦈' },
+  { id: 'turtle', label: '海龜', emoji: '🐢' },
+  { id: 'jellyfish', label: '水母', emoji: '🪼' },
+  { id: 'starfish', label: '海星', emoji: '⭐' },
+  { id: 'robot', label: '機器地鼠', emoji: '🤖' },
+  { id: 'ghost', label: '幽靈地鼠', emoji: '👻' },
+  { id: 'custom', label: '自訂上傳圖片', emoji: '🖼️' }
+];
+
+export const HIT_SOUND_PRESETS = [
+  { id: 'sparkle', label: '清脆泡泡' },
+  { id: 'coin', label: '得分金幣' },
+  { id: 'pop', label: '彈跳 Pop' },
+  { id: 'voice-hit', label: '語音：打到了' },
+  { id: 'custom-hit', label: '自訂打中音效' }
+];
+
+export const MISS_SOUND_PRESETS = [
+  { id: 'soft-buzz', label: '低音喔喔' },
+  { id: 'bubble-down', label: '泡泡下沉' },
+  { id: 'wood', label: '木魚敲空' },
+  { id: 'voice-miss', label: '語音：喔喔' },
+  { id: 'custom-miss', label: '自訂沒打中音效' }
+];
+
 export function getLevelConfig(level) {
   const normalized = Math.min(20, Math.max(1, Number(level) || 1));
   const intervalMs = Math.round(980 - (normalized - 1) * 34);
@@ -55,6 +88,10 @@ export function pickRandomHole(boardSize, previousIndex = -1) {
   let next = Math.floor(Math.random() * boardSize);
   if (next === previousIndex) next = (next + 1) % boardSize;
   return next;
+}
+
+export function getBuiltInMole(id) {
+  return MOLE_VISUALS.find(item => item.id === id && item.id !== 'custom') || MOLE_VISUALS[0];
 }
 
 export function now() {

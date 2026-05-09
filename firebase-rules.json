@@ -6,7 +6,7 @@
       "$roomId": {
         ".read": "auth != null",
         ".write": "auth != null && !data.exists() && newData.child('hostId').val() == auth.uid",
-        ".validate": "newData.hasChildren(['hostId', 'status', 'level', 'theme', 'duration', 'players'])",
+        ".validate": "newData.hasChildren(['hostId', 'status', 'gameMode', 'teamScore', 'level', 'theme', 'duration', 'players'])",
         "hostId": {
           ".write": "auth != null && !data.exists() && newData.val() == auth.uid",
           ".validate": "newData.isString()"
@@ -19,13 +19,21 @@
           ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
           ".validate": "newData.val() == 'waiting' || newData.val() == 'playing' || newData.val() == 'ended'"
         },
+        "gameMode": {
+          ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
+          ".validate": "newData.val() == 'coop' || newData.val() == 'versus'"
+        },
+        "teamScore": {
+          ".write": "auth != null && (root.child('rooms').child($roomId).child('hostId').val() == auth.uid || root.child('rooms').child($roomId).child('players').child(auth.uid).exists())",
+          ".validate": "newData.isNumber() && newData.val() >= 0 && (!data.exists() && newData.val() == 0 || root.child('rooms').child($roomId).child('hostId').val() == auth.uid && newData.val() == 0 || root.child('rooms').child($roomId).child('gameMode').val() == 'coop' && data.exists() && newData.val() >= data.val() && newData.val() <= data.val() + 1)"
+        },
         "level": {
           ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
           ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 20"
         },
         "theme": {
           ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
-          ".validate": "newData.isString()"
+          ".validate": "newData.isString() && newData.val().length <= 32"
         },
         "duration": {
           ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
@@ -41,7 +49,40 @@
         },
         "moleKey": {
           ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
-          ".validate": "newData.isString()"
+          ".validate": "newData.isString() && newData.val().length <= 80"
+        },
+        "lastHitMoleKey": {
+          ".write": "auth != null && (root.child('rooms').child($roomId).child('hostId').val() == auth.uid || root.child('rooms').child($roomId).child('players').child(auth.uid).exists())",
+          ".validate": "newData.isString() && newData.val().length <= 80"
+        },
+        "lastHitBy": {
+          ".write": "auth != null && (root.child('rooms').child($roomId).child('hostId').val() == auth.uid || root.child('rooms').child($roomId).child('players').child(auth.uid).exists())",
+          ".validate": "newData.isString() && newData.val().length <= 128"
+        },
+        "moleVisual": {
+          ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
+          "type": {
+            ".validate": "newData.val() == 'emoji' || newData.val() == 'image'"
+          },
+          "value": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 260000"
+          },
+          "label": {
+            ".validate": "newData.isString() && newData.val().length <= 30"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "hitClaims": {
+          ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",
+          "$moleKey": {
+            ".write": "auth != null && !data.exists() && root.child('rooms').child($roomId).child('players').child(auth.uid).exists()",
+            ".validate": "newData.hasChildren(['by', 'at']) && newData.child('by').val() == auth.uid && newData.child('at').isNumber()",
+            "by": { ".validate": "newData.val() == auth.uid" },
+            "at": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
         },
         "startedAt": {
           ".write": "auth != null && root.child('rooms').child($roomId).child('hostId').val() == auth.uid",

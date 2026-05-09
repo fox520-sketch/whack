@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0ea5e9" />
-  <meta name="description" content="簡約清爽海洋風打地鼠網頁遊戲，支援單人、Firebase 多人房間、20 級難度、多主題、音效與排行榜。" />
-  <title>海洋打地鼠 | Firebase 多人版</title>
+  <meta name="description" content="簡約清爽海洋風打地鼠網頁遊戲，支援單人、Firebase 多人合作/競賽房間、20 級難度、多主題、自訂圖案與自訂音效。" />
+  <title>海洋打地鼠 | Firebase 多人合作版</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body data-theme="ocean">
@@ -18,7 +18,7 @@
       <div class="hero-copy">
         <p class="eyebrow">Ocean Whack-a-Mole</p>
         <h1>海洋打地鼠</h1>
-        <p class="subtitle">單人練反應，多人開房間一起比手速。支援電腦、平板、手機觸控。</p>
+        <p class="subtitle">單人練反應，多人可選合作共分或競賽計分。支援電腦、平板、手機觸控、自訂圖案與自訂音效。</p>
         <div class="hero-actions">
           <button class="primary" id="singleQuickStart">單人快速開始</button>
           <button class="ghost" id="scrollToMultiplayer">多人房間</button>
@@ -26,7 +26,7 @@
       </div>
       <div class="hero-mascot" aria-hidden="true">
         <div class="wave-orb">🐹</div>
-        <div class="mini-badge">20 級難度</div>
+        <div class="mini-badge">合作模式新增</div>
       </div>
     </section>
 
@@ -60,6 +60,49 @@
           <select id="themeSelect"></select>
         </label>
 
+        <label class="field">
+          <span>地鼠圖案</span>
+          <select id="moleSelect"></select>
+        </label>
+
+        <div class="upload-box">
+          <label class="file-button">
+            <input id="moleUpload" type="file" accept="image/*" />
+            <span>上傳自訂地鼠圖片</span>
+          </label>
+          <div class="preview-chip" id="customMolePreview">尚未上傳自訂圖片</div>
+          <small>圖片會自動縮成 256px，合作/多人房間會由房主同步給其他玩家。</small>
+        </div>
+
+        <label class="field">
+          <span>打中音效</span>
+          <select id="hitSoundSelect"></select>
+        </label>
+        <div class="upload-box compact">
+          <label class="file-button">
+            <input id="hitSoundUpload" type="file" accept="audio/*" />
+            <span>上傳打中錄音檔</span>
+          </label>
+          <small>建議小於 700KB，例如「打到了」。</small>
+        </div>
+
+        <label class="field">
+          <span>沒打中音效</span>
+          <select id="missSoundSelect"></select>
+        </label>
+        <div class="upload-box compact">
+          <label class="file-button">
+            <input id="missSoundUpload" type="file" accept="audio/*" />
+            <span>上傳沒打中錄音檔</span>
+          </label>
+          <small>建議小於 700KB，例如「喔喔」。</small>
+        </div>
+
+        <div class="sound-actions">
+          <button id="previewHitSound" class="ghost" type="button">試聽打中</button>
+          <button id="previewMissSound" class="ghost" type="button">試聽沒中</button>
+        </div>
+
         <div class="toggle-row">
           <label class="switch">
             <input id="soundToggle" type="checkbox" checked />
@@ -70,7 +113,14 @@
 
         <div class="mode-card" id="multiplayerPanel">
           <h3>多人 Firebase 房間</h3>
-          <p>建立房間後把房號分享給朋友，每個人會獨立計分。</p>
+          <p>建立房間後把房號分享給朋友。合作模式會共同累積同一個團隊分數。</p>
+          <label class="field tight">
+            <span>多人玩法</span>
+            <select id="multiplayerModeSelect">
+              <option value="coop" selected>合作共分：大家一起打同一個團隊分數</option>
+              <option value="versus">競賽計分：每位玩家各自計分</option>
+            </select>
+          </label>
           <div class="button-stack">
             <button id="createRoomBtn" class="secondary">建立房間</button>
             <div class="join-row">
@@ -93,7 +143,7 @@
             <strong id="roomCodeLabel">—</strong>
           </div>
           <div>
-            <p class="label">分數</p>
+            <p class="label" id="scoreTitle">分數</p>
             <strong id="scoreLabel">0</strong>
           </div>
           <div>

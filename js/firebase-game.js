@@ -72,7 +72,18 @@ async function findAvailableRoomCode() {
   throw new Error('暫時無法產生房號，請再試一次。');
 }
 
-export async function createRoom({ playerName, level, theme, duration }) {
+function normalizeGameMode(mode) {
+  return mode === 'versus' ? 'versus' : 'coop';
+}
+
+function cleanMoleVisual(moleVisual = {}) {
+  const type = moleVisual.type === 'image' ? 'image' : 'emoji';
+  const value = String(moleVisual.value || '🐹').slice(0, 260000);
+  const label = String(moleVisual.label || '地鼠').slice(0, 30);
+  return { type, value, label };
+}
+
+export async function createRoom({ playerName, level, theme, duration, gameMode = 'coop', moleVisual }) {
   const { db: database, user } = await ensureFirebase();
   const roomCode = await findAvailableRoomCode();
   const levelConfig = getLevelConfig(level);
@@ -82,12 +93,18 @@ export async function createRoom({ playerName, level, theme, duration }) {
     roomCode,
     hostId: user.uid,
     status: 'waiting',
+    gameMode: normalizeGameMode(gameMode),
+    teamScore: 0,
     level: levelConfig.level,
     theme,
     duration: Number(duration),
     boardSize: levelConfig.boardSize,
     currentMole: -1,
     moleKey: '',
+    lastHitMoleKey: '',
+    lastHitBy: '',
+    moleVisual: cleanMoleVisual(moleVisual),
+    hitClaims: {},
     startedAt: 0,
     endsAt: 0,
     updatedAt: serverTimestamp(),
@@ -140,7 +157,7 @@ export async function leaveRoom(roomCode) {
   });
 }
 
-export async function startRoomGame({ roomCode, level, theme, duration }) {
+export async function startRoomGame({ roomCode, level, theme, duration, gameMode, moleVisual }) {
   const { db: database, user } = await ensureFirebase();
   const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
   if (!roomSnapshot.exists()) throw new Error('房間不存在。');
@@ -160,12 +177,18 @@ export async function startRoomGame({ roomCode, level, theme, duration }) {
   await update(ref(database, `rooms/${roomCode}`), {
     ...resetScores,
     status: 'playing',
+    gameMode: normalizeGameMode(gameMode || room.gameMode),
+    teamScore: 0,
     level: levelConfig.level,
     theme: theme || room.theme || 'ocean',
     duration: Number(duration || room.duration || 45),
     boardSize: levelConfig.boardSize,
     currentMole: -1,
     moleKey: '',
+    lastHitMoleKey: '',
+    lastHitBy: '',
+    moleVisual: cleanMoleVisual(moleVisual || room.moleVisual),
+    hitClaims: null,
     startedAt: start,
     endsAt: end,
     updatedAt: serverTimestamp()
@@ -204,6 +227,38 @@ export async function incrementMyScore(roomCode) {
     lastSeen: serverTimestamp(),
     active: true
   });
+}
+
+export async function claimCoopHit({ roomCode, moleKey }) {
+  const { db: database, user } = await ensureFirebase();
+  if (!roomCode || !moleKey) return false;
+
+  const claimRef = ref(database, `rooms/${roomCode}/hitClaims/${moleKey}`);
+  const claimResult = await runTransaction(claimRef, current => {
+    if (current) return;
+    return {
+      by: user.uid,
+      at: now()
+    };
+  });
+
+  if (!claimResult.committed) return false;
+
+  await Promise.all([
+    runTransaction(ref(database, `rooms/${roomCode}/teamScore`), score => (Number(score) || 0) + 1),
+    runTransaction(ref(database, `rooms/${roomCode}/players/${user.uid}/score`), score => (Number(score) || 0) + 1),
+    update(ref(database, `rooms/${roomCode}`), {
+      lastHitMoleKey: moleKey,
+      lastHitBy: user.uid,
+      updatedAt: serverTimestamp()
+    }),
+    update(ref(database, `rooms/${roomCode}/players/${user.uid}`), {
+      lastSeen: serverTimestamp(),
+      active: true
+    })
+  ]);
+
+  return true;
 }
 
 export async function touchMyPresence(roomCode) {
