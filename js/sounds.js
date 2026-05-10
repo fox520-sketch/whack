@@ -37,6 +37,23 @@ function beep({ frequency = 440, duration = 0.08, type = 'sine', gain = 0.08, sl
   osc.stop(end + 0.02);
 }
 
+function unlock() {
+  if (!enabled) return;
+  const audio = getContext();
+  if (audio) {
+    try {
+      const buffer = audio.createBuffer(1, 1, 22050);
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audio.destination);
+      source.start(0);
+    } catch {
+      // Some browsers do not need the silent buffer.
+    }
+  }
+  if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+}
+
 function playDataUrl(dataUrl) {
   if (!enabled || !dataUrl) return false;
   try {
@@ -55,6 +72,9 @@ function speak(text) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'zh-TW';
+    const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+    const preferredVoice = voices.find(voice => /zh[-_](TW|Hant)/i.test(voice.lang)) || voices.find(voice => /^zh/i.test(voice.lang));
+    if (preferredVoice) utterance.voice = preferredVoice;
     utterance.rate = 1.12;
     utterance.pitch = text === '打到了' ? 1.2 : 0.78;
     utterance.volume = 0.95;
@@ -119,6 +139,7 @@ function playMissFallback() {
 }
 
 export const Sound = {
+  unlock,
   setEnabled(value) {
     enabled = Boolean(value);
   },
@@ -156,9 +177,11 @@ export const Sound = {
     beep({ frequency: 460, duration: 0.12, type: 'triangle', gain: 0.05, delay: 0.1 });
   },
   previewHit() {
+    unlock();
     playHitPreset();
   },
   previewMiss() {
+    unlock();
     playMissPreset();
   }
 };

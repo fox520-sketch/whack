@@ -45,6 +45,8 @@ const els = {
   customMolePreview: $('#customMolePreview'),
   hitSoundSelect: $('#hitSoundSelect'),
   missSoundSelect: $('#missSoundSelect'),
+  hitSoundCards: $('#hitSoundCards'),
+  missSoundCards: $('#missSoundCards'),
   hitSoundUpload: $('#hitSoundUpload'),
   missSoundUpload: $('#missSoundUpload'),
   previewHitSound: $('#previewHitSound'),
@@ -146,6 +148,18 @@ function fillSelects() {
   els.missSoundSelect.innerHTML = MISS_SOUND_PRESETS
     .map(item => `<option value="${item.id}">${item.label}</option>`)
     .join('');
+
+  els.hitSoundCards.innerHTML = HIT_SOUND_PRESETS
+    .map(item => soundButtonMarkup(item, 'hit'))
+    .join('');
+
+  els.missSoundCards.innerHTML = MISS_SOUND_PRESETS
+    .map(item => soundButtonMarkup(item, 'miss'))
+    .join('');
+}
+
+function soundButtonMarkup(item, type) {
+  return `<button class="sound-card" type="button" data-sound-type="${type}" data-sound-id="${escapeAttribute(item.id)}" aria-pressed="false"><span>${escapeHtml(item.label)}</span></button>`;
 }
 
 function restorePreferences() {
@@ -172,6 +186,7 @@ function restorePreferences() {
 
   document.body.dataset.theme = els.themeSelect.value;
   state.moleVisual = getSelectedMoleVisual();
+  syncSoundChoiceButtons();
 }
 
 function bindEvents() {
@@ -207,19 +222,31 @@ function bindEvents() {
   els.moleUpload.addEventListener('change', handleMoleUpload);
 
   els.hitSoundSelect.addEventListener('change', () => {
-    localStorage.setItem('wam.hitSoundPreset', els.hitSoundSelect.value);
-    Sound.setHitPreset(els.hitSoundSelect.value);
-    updateUploadVisibility();
+    handleHitSoundChoice(els.hitSoundSelect.value, { preview: true });
   });
   els.missSoundSelect.addEventListener('change', () => {
-    localStorage.setItem('wam.missSoundPreset', els.missSoundSelect.value);
-    Sound.setMissPreset(els.missSoundSelect.value);
-    updateUploadVisibility();
+    handleMissSoundChoice(els.missSoundSelect.value, { preview: true });
+  });
+  els.hitSoundCards.addEventListener('click', event => {
+    const button = event.target.closest('button[data-sound-id]');
+    if (!button) return;
+    handleHitSoundChoice(button.dataset.soundId, { preview: true });
+  });
+  els.missSoundCards.addEventListener('click', event => {
+    const button = event.target.closest('button[data-sound-id]');
+    if (!button) return;
+    handleMissSoundChoice(button.dataset.soundId, { preview: true });
   });
   els.hitSoundUpload.addEventListener('change', event => handleAudioUpload(event, 'hit'));
   els.missSoundUpload.addEventListener('change', event => handleAudioUpload(event, 'miss'));
-  els.previewHitSound.addEventListener('click', () => Sound.previewHit());
-  els.previewMissSound.addEventListener('click', () => Sound.previewMiss());
+  els.previewHitSound.addEventListener('click', () => {
+    Sound.unlock();
+    Sound.previewHit();
+  });
+  els.previewMissSound.addEventListener('click', () => {
+    Sound.unlock();
+    Sound.previewMiss();
+  });
 
   els.soundToggle.addEventListener('change', () => {
     localStorage.setItem('wam.sound', els.soundToggle.checked ? 'on' : 'off');
@@ -263,6 +290,40 @@ function bindEvents() {
 
   window.addEventListener('pagehide', () => {
     if (state.roomCode) leaveRoom(state.roomCode).catch(() => {});
+  });
+}
+
+function handleHitSoundChoice(value, options = {}) {
+  Sound.unlock();
+  els.hitSoundSelect.value = value;
+  localStorage.setItem('wam.hitSoundPreset', value);
+  Sound.setHitPreset(value);
+  syncSoundChoiceButtons();
+  updateUploadVisibility();
+  if (options.preview && value !== 'custom-hit') Sound.previewHit();
+}
+
+function handleMissSoundChoice(value, options = {}) {
+  Sound.unlock();
+  els.missSoundSelect.value = value;
+  localStorage.setItem('wam.missSoundPreset', value);
+  Sound.setMissPreset(value);
+  syncSoundChoiceButtons();
+  updateUploadVisibility();
+  if (options.preview && value !== 'custom-miss') Sound.previewMiss();
+}
+
+function syncSoundChoiceButtons() {
+  $$('#hitSoundCards .sound-card').forEach(button => {
+    const active = button.dataset.soundId === els.hitSoundSelect.value;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+
+  $$('#missSoundCards .sound-card').forEach(button => {
+    const active = button.dataset.soundId === els.missSoundSelect.value;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
 }
 
@@ -423,6 +484,7 @@ async function handleAudioUpload(event, type) {
       localStorage.setItem('wam.hitSoundPreset', 'custom-hit');
       Sound.setHitPreset('custom-hit');
       Sound.setCustomHitSound(dataUrl);
+      syncSoundChoiceButtons();
       setStatus('自訂打中音效已套用。');
       Sound.previewHit();
     } else {
@@ -432,6 +494,7 @@ async function handleAudioUpload(event, type) {
       localStorage.setItem('wam.missSoundPreset', 'custom-miss');
       Sound.setMissPreset('custom-miss');
       Sound.setCustomMissSound(dataUrl);
+      syncSoundChoiceButtons();
       setStatus('自訂沒打中音效已套用。');
       Sound.previewMiss();
     }

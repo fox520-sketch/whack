@@ -967,3 +967,61 @@ button.ghost:not(:disabled):active {
     height: 168px;
   }
 }
+
+
+/* v4 mobile-friendly sound selection */
+.mobile-sound-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sound-card {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--card-solid) 74%, transparent);
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sound-card span {
+  pointer-events: none;
+}
+
+.sound-card.active,
+.sound-card[aria-pressed="true"] {
+  color: white;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  border-color: color-mix(in srgb, var(--primary) 64%, white);
+  box-shadow: 0 10px 18px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.sound-card:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+@media (max-width: 680px) {
+  .native-sound-select {
+    margin-bottom: 8px;
+  }
+
+  .mobile-sound-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .sound-card {
+    min-height: 46px;
+    font-size: 1rem;
+  }
+}
