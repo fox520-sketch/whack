@@ -140,6 +140,8 @@ export async function createRoom({ playerName, level, theme, duration, gameMode 
     status: 'waiting',
     gameMode: normalizedGameMode,
     missionMode: normalizedMissionMode,
+    locked: false,
+    kickedPlayers: {},
     teamScore: 0,
     targetScore,
     bossHp: bossMaxHp,
@@ -188,6 +190,12 @@ export async function joinRoom({ roomCode, playerName }) {
   if (room.expiresAt && Number(room.expiresAt) <= now()) {
     await cleanupExpiredRoomIfNeeded(normalizedCode, room);
     throw new Error('這個房間已過期，請房主重新建立房間。');
+  }
+  if (room.kickedPlayers && room.kickedPlayers[user.uid]) {
+    throw new Error('你已被房主移出這個房間，請重新建立或加入其他房間。');
+  }
+  if (room.locked && !room.players?.[user.uid]) {
+    throw new Error('這個房間已鎖定，暫時不能加入。');
   }
 
   await set(ref(database, `rooms/${normalizedCode}/players/${user.uid}`), emptyPlayerStats(playerName));
@@ -244,6 +252,8 @@ export async function startRoomGame({ roomCode, level, theme, duration, gameMode
     status: 'playing',
     gameMode: normalizedGameMode,
     missionMode: normalizedMissionMode,
+    locked: false,
+    kickedPlayers: {},
     teamScore: 0,
     targetScore,
     bossHp: bossMaxHp,
@@ -461,6 +471,116 @@ export async function subscribeRoom(roomCode, callback) {
       return;
     }
     callback(room);
+  });
+}
+
+
+export async function setRoomLocked(roomCode, locked) {
+  const { db: database, user } = await ensureFirebase();
+  const snapshot = await get(ref(database, `rooms/${roomCode}/hostId`));
+  if (snapshot.val() !== user.uid) throw new Error('只有房主可以鎖定或解除鎖定房間。');
+  await update(ref(database, `rooms/${roomCode}`), {
+    locked: Boolean(locked),
+    updatedAt: serverTimestamp()
+  });
+}
+
+export async function kickPlayer(roomCode, targetUid) {
+  const { db: database, user } = await ensureFirebase();
+  const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
+  if (!roomSnapshot.exists()) throw new Error('房間不存在。');
+  const room = roomSnapshot.val();
+  if (room.hostId !== user.uid) throw new Error('只有房主可以踢出玩家。');
+  if (targetUid === user.uid) throw new Error('房主不能踢出自己。');
+  await update(ref(database, `rooms/${roomCode}`), {
+    [`players/${targetUid}/active`]: false,
+    [`players/${targetUid}/kicked`]: true,
+    [`players/${targetUid}/lastSeen`]: serverTimestamp(),
+    [`kickedPlayers/${targetUid}`]: true,
+    updatedAt: serverTimestamp()
+  });
+}
+
+export async function clearInactivePlayers(roomCode) {
+  const { db: database, user } = await ensureFirebase();
+  const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
+  if (!roomSnapshot.exists()) throw new Error('房間不存在。');
+  const room = roomSnapshot.val();
+  if (room.hostId !== user.uid) throw new Error('只有房主可以清除離線玩家。');
+  const patch = {};
+  const players = room.players || {};
+  Object.entries(players).forEach(([uid, player]) => {
+    const lastSeen = Number(player?.lastSeen || 0);
+    const recentlySeen = lastSeen > 0 && now() - lastSeen < 60_000;
+    if (uid !== user.uid && (!player?.active || !recentlySeen || player?.kicked)) {
+      patch[`players/${uid}`] = null;
+    }
+  });
+  if (!Object.keys(patch).length) return 0;
+  patch.updatedAt = serverTimestamp();
+  await update(ref(database, `rooms/${roomCode}`), patch);
+  return Object.keys(patch).length - 1;
+}
+
+function getWeekKey(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+function getLeaderboardPaths(timestamp) {
+  const date = new Date(Number(timestamp || now()));
+  const day = date.toISOString().slice(0, 10);
+  const week = getWeekKey(date);
+  return {
+    daily: `leaderboards/daily/${day}/records`,
+    weekly: `leaderboards/weekly/${week}/records`,
+    allTime: 'leaderboards/allTime/records'
+  };
+}
+
+function cleanScoreRecord(record, userId, timestamp) {
+  return {
+    userId,
+    name: String(record.name || '匿名玩家').slice(0, 24),
+    score: Math.max(0, Math.min(999999, Number(record.score || 0))),
+    mode: String(record.mode || '遊戲').slice(0, 40),
+    level: Math.max(1, Math.min(20, Number(record.level || 1))),
+    duration: Math.max(1, Math.min(600, Number(record.duration || 45))),
+    accuracy: Math.max(0, Math.min(100, Number(record.accuracy || 0))),
+    maxCombo: Math.max(0, Math.min(99999, Number(record.maxCombo || 0))),
+    grade: String(record.grade || '-').slice(0, 4),
+    roomCode: String(record.roomCode || '').slice(0, 12),
+    timestamp
+  };
+}
+
+export async function submitGlobalScore(record, stableId = '') {
+  const { db: database, user } = await ensureFirebase();
+  const timestamp = now();
+  const id = String(stableId || `${user.uid}-${timestamp}`).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || `${user.uid}-${timestamp}`;
+  const clean = cleanScoreRecord(record, user.uid, timestamp);
+  const paths = getLeaderboardPaths(timestamp);
+  const patch = {};
+  Object.values(paths).forEach(path => {
+    patch[`${path}/${id}`] = clean;
+  });
+  await update(ref(database), patch);
+  return id;
+}
+
+export async function subscribeGlobalLeaderboard(scope = 'daily', callback) {
+  const { db: database } = await ensureFirebase();
+  const timestamp = now();
+  const paths = getLeaderboardPaths(timestamp);
+  const path = paths[scope] || paths.daily;
+  return onValue(ref(database, path), snapshot => {
+    const records = Object.entries(snapshot.val() || {}).map(([id, item]) => ({ id, ...item }));
+    records.sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.timestamp || 0) - Number(a.timestamp || 0));
+    callback(records.slice(0, 20));
   });
 }
 

@@ -30,6 +30,11 @@ import {
   subscribeRoom,
   getUid,
   touchMyPresence,
+  setRoomLocked,
+  kickPlayer,
+  clearInactivePlayers,
+  submitGlobalScore,
+  subscribeGlobalLeaderboard,
   ROOM_TTL_MS
 } from './firebase-game.js';
 
@@ -40,6 +45,7 @@ const els = {
   startPanel: $('#startPanel'),
   singleQuickStart: $('#singleQuickStart'),
   scrollToMultiplayer: $('#scrollToMultiplayer'),
+  openTutorialBtn: $('#openTutorialBtn'),
   playerName: $('#playerName'),
   levelRange: $('#levelRange'),
   levelText: $('#levelText'),
@@ -72,6 +78,11 @@ const els = {
   copyInviteBtn: $('#copyInviteBtn'),
   refreshQrBtn: $('#refreshQrBtn'),
   roomExpiryLabel: $('#roomExpiryLabel'),
+  hostControlsCard: $('#hostControlsCard'),
+  lockStatusLabel: $('#lockStatusLabel'),
+  toggleLockRoomBtn: $('#toggleLockRoomBtn'),
+  restartRoomBtn: $('#restartRoomBtn'),
+  clearOfflineBtn: $('#clearOfflineBtn'),
   installPwaBtn: $('#installPwaBtn'),
   pwaHint: $('#pwaHint'),
   modeLabel: $('#modeLabel'),
@@ -86,6 +97,15 @@ const els = {
   leaveRoomBtn: $('#leaveRoomBtn'),
   roomLeaderboard: $('#roomLeaderboard'),
   localLeaderboard: $('#localLeaderboard'),
+  globalLeaderboardPanel: $('#globalLeaderboardPanel'),
+  globalScopeSelect: $('#globalScopeSelect'),
+  globalLeaderboard: $('#globalLeaderboard'),
+  achievementSummary: $('#achievementSummary'),
+  achievementList: $('#achievementList'),
+  resetTutorialBtn: $('#resetTutorialBtn'),
+  tutorialDialog: $('#tutorialDialog'),
+  closeTutorialBtn: $('#closeTutorialBtn'),
+  dontShowTutorialAgain: $('#dontShowTutorialAgain'),
   resultDialog: $('#resultDialog'),
   resultTitle: $('#resultTitle'),
   resultText: $('#resultText'),
@@ -102,6 +122,9 @@ const state = {
   isHost: false,
   room: null,
   roomUnsubscribe: null,
+  globalLeaderboardUnsubscribe: null,
+  globalScope: 'daily',
+  globalSubmitKeys: new Set(),
   presenceTimer: null,
   expiryTimer: null,
   deferredInstallPrompt: null,
@@ -148,12 +171,15 @@ function init() {
   buildBoard(getLevelConfig(els.levelRange.value).boardSize);
   updateLocalLeaderboard();
   renderRoomLeaderboard([]);
+  renderAchievements();
+  subscribeCurrentGlobalLeaderboard();
   updateFirebaseNotice();
   updateTopbar();
   updateMissionStrip();
   updateCustomMolePreview();
   updateUploadVisibility();
   setupInviteFromUrl();
+  setupTutorial();
   setupPwaInstall();
   registerServiceWorker();
 }
@@ -189,6 +215,8 @@ function restorePreferences() {
   state.customMoleDataUrl = localStorage.getItem('wam.customMoleImage') || '';
   state.customHitSound = localStorage.getItem('wam.customHitSound') || '';
   state.customMissSound = localStorage.getItem('wam.customMissSound') || '';
+  state.globalScope = localStorage.getItem('wam.globalScope') || 'daily';
+  if (els.globalScopeSelect) els.globalScopeSelect.value = state.globalScope;
 
   Sound.setEnabled(els.soundToggle.checked);
   Sound.setHitPreset(els.hitSoundSelect.value);
@@ -204,6 +232,7 @@ function restorePreferences() {
 function bindEvents() {
   els.singleQuickStart.addEventListener('click', () => startSingleGame());
   els.scrollToMultiplayer.addEventListener('click', () => $('#multiplayerPanel').scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  els.openTutorialBtn.addEventListener('click', () => openTutorial(false));
 
   els.playerName.addEventListener('input', () => localStorage.setItem('wam.playerName', els.playerName.value));
   els.levelRange.addEventListener('input', () => {
@@ -274,6 +303,23 @@ function bindEvents() {
   els.copyInviteBtn.addEventListener('click', copyInviteLink);
   els.refreshQrBtn.addEventListener('click', () => {
     if (state.roomCode) renderRoomQrCode(getInviteUrl(state.roomCode));
+  });
+  els.toggleLockRoomBtn.addEventListener('click', handleToggleLockRoom);
+  els.restartRoomBtn.addEventListener('click', handleRestartRoom);
+  els.clearOfflineBtn.addEventListener('click', handleClearOfflinePlayers);
+  els.roomLeaderboard.addEventListener('click', event => {
+    const button = event.target.closest('[data-kick-uid]');
+    if (button) handleKickPlayer(button.dataset.kickUid);
+  });
+  els.globalScopeSelect.addEventListener('change', () => {
+    state.globalScope = els.globalScopeSelect.value;
+    localStorage.setItem('wam.globalScope', state.globalScope);
+    subscribeCurrentGlobalLeaderboard();
+  });
+  els.resetTutorialBtn.addEventListener('click', () => openTutorial(false));
+  els.closeTutorialBtn.addEventListener('click', closeTutorial);
+  els.dontShowTutorialAgain.addEventListener('change', () => {
+    localStorage.setItem('wam.tutorialSeen', els.dontShowTutorialAgain.checked ? 'yes' : 'no');
   });
   els.installPwaBtn.addEventListener('click', installPwa);
 
@@ -684,6 +730,7 @@ function endSingleGame(options = {}) {
     players: [{ name: getPlayerName(), score: state.score, ...state.stats }],
     completed
   });
+  summary.newAchievements = unlockAchievements(summary);
   setStatus(`${summary.title} 你的分數是 ${state.score}，命中率 ${summary.accuracy}% ，最高連擊 ${state.stats.maxCombo}。`);
   saveLocalScore({
     name: getPlayerName(),
@@ -698,6 +745,7 @@ function endSingleGame(options = {}) {
     grade: summary.grade
   });
   updateLocalLeaderboard();
+  maybeSubmitGlobalScore(summary, `single-${Date.now()}`);
   showResult(summary);
   updateTopbar();
   updateMissionStrip();
@@ -899,6 +947,11 @@ function handleRoomUpdate(room) {
   state.room = room;
   state.isHost = room.hostId === state.uid;
   const me = room.players?.[state.uid] || {};
+  if (me.kicked || room.kickedPlayers?.[state.uid]) {
+    setStatus('你已被房主移出房間。');
+    resetToSingleMode();
+    return;
+  }
   state.score = Number(me.score || 0);
   state.stats = {
     hits: Number(me.hits || 0),
@@ -914,6 +967,7 @@ function handleRoomUpdate(room) {
   state.multiplayerMode = room.gameMode || 'coop';
   state.missionMode = room.missionMode || 'classic';
   updateRoomShare(room);
+  updateHostControls(room);
 
   if (room.moleVisual) {
     state.moleVisual = room.moleVisual;
@@ -979,6 +1033,8 @@ function handleRoomUpdate(room) {
       setStatus(`${summary.title} ${room.gameMode === 'coop' ? `團隊分數 ${state.teamScore}` : `你的分數 ${state.score}`}，評級 ${summary.grade}。`);
       if (dialogKey !== state.endedDialogKey) {
         state.endedDialogKey = dialogKey;
+        summary.newAchievements = unlockAchievements(summary);
+        maybeSubmitGlobalScore(summary, dialogKey);
         Sound.end();
         showResult(summary);
       }
@@ -1119,6 +1175,7 @@ function resetToSingleMode() {
   els.startGameBtn.disabled = false;
   els.startGameBtn.textContent = '開始遊戲';
   els.roomShareCard.hidden = true;
+  els.hostControlsCard.hidden = true;
   buildBoard(getLevelConfig(els.levelRange.value).boardSize);
   renderRoomLeaderboard([]);
   updateTopbar();
@@ -1166,6 +1223,9 @@ function resultMarkup(summary) {
     : summary.missionMode === 'boss'
       ? `<p><strong>任務：</strong>${escapeHtml(mission)}・${summary.bossDefeated ? 'Boss 已擊敗' : 'Boss 尚未擊敗'}</p>`
       : `<p><strong>模式：</strong>${escapeHtml(mission)}</p>`;
+  const achievementRows = summary.newAchievements?.length
+    ? `<div class="new-achievements"><strong>新成就解鎖！</strong>${summary.newAchievements.map(item => `<span>🏆 ${escapeHtml(item.title)}</span>`).join('')}</div>`
+    : '';
   const playerRows = summary.players?.length
     ? `<div class="result-player-list">${summary.players
         .slice()
@@ -1186,6 +1246,7 @@ function resultMarkup(summary) {
     </div>
     <p><strong>命中 / 失誤：</strong>${Number(summary.stats.hits || 0)} / ${Number(summary.stats.misses || 0)}</p>
     ${mvpLine}
+    ${achievementRows}
     ${playerRows}
   `;
 }
@@ -1272,8 +1333,9 @@ function renderRoomLeaderboard(players, roomMode = 'coop') {
     return `
       <li class="${online ? 'online-player' : 'offline-player'}">
         <span class="rank">${index + 1}</span>
-        <span>${escapeHtml(player.name)}${player.uid === state.uid ? '（你）' : ''}<br><small><span class="presence-dot"></span>${presenceText}・${scoreLabel}・命中 ${Number(player.hits || 0)}・連擊 ${Number(player.maxCombo || 0)}</small></span>
+        <span>${escapeHtml(player.name)}${player.uid === state.uid ? '（你）' : ''}${player.kicked ? '（已踢出）' : ''}<br><small><span class="presence-dot"></span>${presenceText}・${scoreLabel}・命中 ${Number(player.hits || 0)}・連擊 ${Number(player.maxCombo || 0)}</small></span>
         <strong>${Number(player.score || 0)}</strong>
+        ${state.isHost && player.uid !== state.uid ? `<button class="kick-player-btn" type="button" data-kick-uid="${escapeAttribute(player.uid)}">踢出</button>` : ''}
       </li>
     `;
   }).join('');
@@ -1302,6 +1364,7 @@ function updateRoomShare(room) {
   const roomCode = room?.roomCode || state.roomCode;
   if (!roomCode) {
     els.roomShareCard.hidden = true;
+  els.hostControlsCard.hidden = true;
     return;
   }
   els.roomShareCard.hidden = false;
@@ -1411,6 +1474,179 @@ function registerServiceWorker() {
   });
 }
 
+
+function updateHostControls(room) {
+  if (!els.hostControlsCard) return;
+  const show = state.mode === 'online' && state.isHost && Boolean(room);
+  els.hostControlsCard.hidden = !show;
+  if (!show) return;
+  const locked = Boolean(room.locked);
+  els.lockStatusLabel.textContent = locked ? '房間目前已鎖定：新玩家不能加入。' : '房間目前開放：新玩家可用房號或 QR Code 加入。';
+  els.toggleLockRoomBtn.textContent = locked ? '解除鎖定' : '鎖定房間';
+  els.restartRoomBtn.disabled = false;
+}
+
+async function handleToggleLockRoom() {
+  if (!state.roomCode || !state.isHost) return setStatus('只有房主可以鎖定房間。');
+  try {
+    const nextLocked = !Boolean(state.room?.locked);
+    await setRoomLocked(state.roomCode, nextLocked);
+    setStatus(nextLocked ? '房間已鎖定，新玩家不能加入。' : '房間已解除鎖定，新玩家可以加入。');
+  } catch (error) {
+    setStatus(error.message || '鎖定房間失敗。');
+  }
+}
+
+async function handleRestartRoom() {
+  if (!state.roomCode || !state.isHost) return setStatus('只有房主可以重開本局。');
+  await handleOnlineStart();
+  setStatus('房主已重新開始本局。');
+}
+
+async function handleClearOfflinePlayers() {
+  if (!state.roomCode || !state.isHost) return setStatus('只有房主可以清除離線玩家。');
+  try {
+    const count = await clearInactivePlayers(state.roomCode);
+    setStatus(count ? `已清除 ${count} 位離線或被踢出的玩家。` : '目前沒有可清除的離線玩家。');
+  } catch (error) {
+    setStatus(error.message || '清除離線玩家失敗。');
+  }
+}
+
+async function handleKickPlayer(uid) {
+  if (!uid || !state.roomCode || !state.isHost) return;
+  const player = state.room?.players?.[uid];
+  const name = player?.name || '這位玩家';
+  if (!confirm(`確定要踢出「${name}」嗎？`)) return;
+  try {
+    await kickPlayer(state.roomCode, uid);
+    setStatus(`已踢出 ${name}。`);
+  } catch (error) {
+    setStatus(error.message || '踢出玩家失敗。');
+  }
+}
+
+const ACHIEVEMENTS = [
+  { id: 'first-hit', title: '初次出沒', desc: '完成第一次命中', test: s => Number(s.stats?.hits || 0) >= 1 },
+  { id: 'combo-10', title: '十連不斷', desc: '最高連擊達 10', test: s => Number(s.stats?.maxCombo || 0) >= 10 },
+  { id: 'combo-25', title: '連擊高手', desc: '最高連擊達 25', test: s => Number(s.stats?.maxCombo || 0) >= 25 },
+  { id: 'accuracy-80', title: '準度達人', desc: '命中率達 80%', test: s => Number(s.accuracy || 0) >= 80 && Number(s.stats?.hits || 0) >= 10 },
+  { id: 'grade-s', title: 'S 級鼠叔獵人', desc: '獲得 S 或 S+ 評級', test: s => s.grade === 'S' || s.grade === 'S+' },
+  { id: 'boss-defeated', title: 'Boss 擊破', desc: '完成 Boss 地鼠任務', test: s => Boolean(s.bossDefeated) },
+  { id: 'target-complete', title: '合作達標', desc: '完成限時達標任務', test: s => s.missionMode === 'target' && Boolean(s.completed) },
+  { id: 'multiplayer-finish', title: '多人同樂', desc: '完成一場多人遊戲', test: s => s.roomMode === 'coop' || s.roomMode === 'versus' },
+  { id: 'boss-hitter', title: 'Boss 連打手', desc: 'Boss 命中達 5 次', test: s => Number(s.stats?.bossHits || 0) >= 5 },
+  { id: 'hundred-score', title: '百分獵人', desc: '單局分數達 100', test: s => Number(s.score || 0) >= 100 }
+];
+
+function getAchievements() {
+  try { return JSON.parse(localStorage.getItem('wam.achievements') || '{}'); }
+  catch { return {}; }
+}
+
+function saveAchievements(data) {
+  localStorage.setItem('wam.achievements', JSON.stringify(data));
+}
+
+function unlockAchievements(summary) {
+  const earned = getAchievements();
+  const newly = [];
+  ACHIEVEMENTS.forEach(item => {
+    if (!earned[item.id] && item.test(summary)) {
+      earned[item.id] = { earnedAt: new Date().toISOString(), title: item.title };
+      newly.push(item);
+    }
+  });
+  if (newly.length) saveAchievements(earned);
+  renderAchievements();
+  return newly;
+}
+
+function renderAchievements() {
+  if (!els.achievementList) return;
+  const earned = getAchievements();
+  const count = Object.keys(earned).length;
+  els.achievementSummary.textContent = `已解鎖 ${count} / ${ACHIEVEMENTS.length} 個成就`;
+  els.achievementList.innerHTML = ACHIEVEMENTS.map(item => {
+    const unlocked = Boolean(earned[item.id]);
+    return `<li class="${unlocked ? 'unlocked' : 'locked'}"><span>${unlocked ? '🏆' : '🔒'}</span><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.desc)}</small></div></li>`;
+  }).join('');
+}
+
+async function maybeSubmitGlobalScore(summary, keySeed) {
+  if (!isFirebaseConfigured()) return;
+  const online = state.mode === 'online';
+  const roomMode = state.room?.gameMode || summary.roomMode || 'single';
+  if (online && roomMode === 'coop' && !state.isHost) return;
+  const stableKey = `${keySeed}-${online && roomMode === 'coop' ? 'team' : state.uid || 'local'}`;
+  if (state.globalSubmitKeys.has(stableKey)) return;
+  state.globalSubmitKeys.add(stableKey);
+  const isCoopTeam = online && roomMode === 'coop';
+  const record = {
+    name: isCoopTeam ? `房間 ${state.roomCode} 合作隊` : getPlayerName(),
+    score: Number(summary.score || 0),
+    mode: isCoopTeam ? `多人合作・${getMissionLabel(summary.missionMode)}` : online ? `多人競賽・${getMissionLabel(summary.missionMode)}` : (summary.missionMode === 'classic' ? '單人' : `單人・${getMissionLabel(summary.missionMode)}`),
+    level: Number(els.levelRange.value),
+    duration: Number(els.durationSelect.value),
+    accuracy: Number(summary.accuracy || 0),
+    maxCombo: Number(summary.stats?.maxCombo || 0),
+    grade: summary.grade || '-',
+    roomCode: isCoopTeam ? state.roomCode : ''
+  };
+  try {
+    await submitGlobalScore(record, stableKey);
+    subscribeCurrentGlobalLeaderboard();
+  } catch (error) {
+    console.warn('Global leaderboard submit failed', error);
+  }
+}
+
+async function subscribeCurrentGlobalLeaderboard() {
+  if (!els.globalLeaderboard || !isFirebaseConfigured()) {
+    if (els.globalLeaderboard) els.globalLeaderboard.innerHTML = '<li class="empty">設定 Firebase 後才會顯示全站排行榜。</li>';
+    return;
+  }
+  if (state.globalLeaderboardUnsubscribe) state.globalLeaderboardUnsubscribe();
+  const scope = state.globalScope || 'daily';
+  try {
+    state.globalLeaderboardUnsubscribe = await subscribeGlobalLeaderboard(scope, renderGlobalLeaderboard);
+  } catch (error) {
+    els.globalLeaderboard.innerHTML = `<li class="empty">讀取全站排行榜失敗：${escapeHtml(error.message || '')}</li>`;
+  }
+}
+
+function renderGlobalLeaderboard(records) {
+  if (!records.length) {
+    els.globalLeaderboard.innerHTML = '<li class="empty">還沒有全站成績，完成一局就能上榜。</li>';
+    return;
+  }
+  els.globalLeaderboard.innerHTML = records.slice(0, 10).map((item, index) => `
+    <li>
+      <span class="rank">${index + 1}</span>
+      <span>${escapeHtml(item.name || '玩家')}<br><small>${escapeHtml(item.mode || '遊戲')}・難度 ${Number(item.level || 1)}・命中率 ${Number(item.accuracy || 0)}%・${escapeHtml(item.grade || '-')}</small></span>
+      <strong>${Number(item.score || 0)}</strong>
+    </li>
+  `).join('');
+}
+
+function setupTutorial() {
+  const seen = localStorage.getItem('wam.tutorialSeen') === 'yes';
+  if (!seen) setTimeout(() => openTutorial(true), 450);
+}
+
+function openTutorial(auto = false) {
+  if (!els.tutorialDialog) return;
+  if (auto && localStorage.getItem('wam.tutorialSeen') === 'yes') return;
+  if (els.tutorialDialog.open) return;
+  if (typeof els.tutorialDialog.showModal === 'function') els.tutorialDialog.showModal();
+  else alert('新手教學：先選設定，可單人開始；多人建立房間後分享 QR Code，房主可鎖房、重開與踢出玩家。');
+}
+
+function closeTutorial() {
+  if (els.dontShowTutorialAgain?.checked) localStorage.setItem('wam.tutorialSeen', 'yes');
+  els.tutorialDialog.close();
+}
+
 function formatTimeLeft(ms) {
   const minutes = Math.max(0, Math.ceil(ms / 60_000));
   if (minutes >= 60) {
@@ -1433,6 +1669,8 @@ function switchLeaderboardTab(tabName) {
   $$('.tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tabName));
   els.roomLeaderboard.hidden = tabName !== 'room';
   els.localLeaderboard.hidden = tabName !== 'local';
+  els.globalLeaderboardPanel.hidden = tabName !== 'global';
+  if (tabName === 'global') subscribeCurrentGlobalLeaderboard();
 }
 
 function escapeHtml(value) {

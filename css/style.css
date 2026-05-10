@@ -1252,3 +1252,150 @@ button.ghost:not(:disabled):active {
     padding: 20px;
   }
 }
+
+/* v6 additions */
+.host-controls-card,
+.achievements-card,
+.global-leaderboard-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--card) 82%, var(--accent) 10%);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.host-controls-card h4,
+.achievements-card h3 {
+  margin: 0 0 8px;
+}
+
+.host-controls-card p,
+.achievements-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.host-actions,
+.share-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.kick-player-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  background: #ef4444;
+  box-shadow: 0 6px 14px rgb(239 68 68 / 0.22);
+  cursor: pointer;
+}
+
+.achievement-summary {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--primary-strong);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.achievement-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+}
+
+.achievement-list li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: start;
+  padding: 8px 9px;
+  border-radius: 14px;
+  background: color-mix(in srgb, #fff 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.achievement-list li.locked {
+  opacity: 0.55;
+  filter: grayscale(0.25);
+}
+
+.achievement-list strong {
+  display: block;
+  font-size: 13px;
+}
+
+.achievement-list small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.new-achievements {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, #fde68a 36%, var(--card));
+  border: 1px solid rgb(245 158 11 / 0.32);
+}
+
+.new-achievements span {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 800;
+}
+
+.tutorial-dialog .tutorial-steps {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 14px;
+}
+
+.tutorial-dialog .tutorial-steps > div {
+  padding: 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.tutorial-dialog p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.tutorial-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.global-leaderboard-panel .field {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 720px) {
+  .host-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .kick-player-btn {
+    padding: 7px 9px;
+  }
+}

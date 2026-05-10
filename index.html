@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0ea5e9" />
-  <meta name="description" content="簡約清爽海洋風「鼠叔出沒」網頁遊戲，支援單人、Firebase 多人合作/競賽房間、20 級難度、多主題、自訂圖案、自訂音效、房間 QR Code 與 PWA 安裝。" />
-  <title>鼠叔出沒 | Firebase 多人合作版</title>
+  <meta name="description" content="簡約清爽海洋風「鼠叔出沒」網頁遊戲，支援單人、Firebase 多人合作/競賽房間、20 級難度、多主題、自訂圖案、自訂音效、房間 QR Code、房主控制、全站排行榜、成就系統與 PWA 安裝。" />
+  <title>鼠叔出沒 | Firebase 多人合作版 v6</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/style.css" />
@@ -24,11 +24,12 @@
         <div class="hero-actions">
           <button class="primary" id="singleQuickStart">單人快速開始</button>
           <button class="ghost" id="scrollToMultiplayer">多人房間</button>
+          <button class="ghost" id="openTutorialBtn" type="button">新手教學</button>
         </div>
       </div>
       <div class="hero-mascot" aria-hidden="true">
         <div class="wave-orb">🐹</div>
-        <div class="mini-badge">v5 任務模式</div>
+        <div class="mini-badge">v6 完整房間版</div>
       </div>
     </section>
 
@@ -153,6 +154,17 @@
             </div>
             <small id="roomExpiryLabel">房間會自動過期。</small>
           </div>
+
+          <div class="host-controls-card" id="hostControlsCard" hidden>
+            <h4>房主控制</h4>
+            <p id="lockStatusLabel">房間目前可加入。</p>
+            <div class="host-actions">
+              <button id="toggleLockRoomBtn" class="ghost" type="button">鎖定房間</button>
+              <button id="restartRoomBtn" class="ghost" type="button">重開本局</button>
+              <button id="clearOfflineBtn" class="ghost" type="button">清除離線玩家</button>
+            </div>
+            <small>房主可在房間榜對玩家按「踢出」。鎖房後新玩家不能加入，已在房間內的人可繼續遊玩。</small>
+          </div>
         </div>
 
         <div class="install-card">
@@ -160,6 +172,14 @@
           <p>可把「鼠叔出沒」加入手機桌面，像 App 一樣開啟。</p>
           <button id="installPwaBtn" class="secondary" type="button" hidden>安裝到手機 / 桌面</button>
           <small id="pwaHint">Android/Chrome 會在可安裝時顯示按鈕；iPhone 請用 Safari 分享 → 加到主畫面。</small>
+        </div>
+
+        <div class="achievements-card">
+          <h3>成就系統</h3>
+          <p>完成指定目標會自動解鎖，紀錄會保存在這台裝置。</p>
+          <div id="achievementSummary" class="achievement-summary">尚未解鎖成就。</div>
+          <ul id="achievementList" class="achievement-list"></ul>
+          <button id="resetTutorialBtn" class="ghost" type="button">重看新手教學</button>
         </div>
       </aside>
 
@@ -198,9 +218,22 @@
         <div class="tabs" role="tablist" aria-label="排行榜切換">
           <button class="tab active" data-tab="room" type="button">房間榜</button>
           <button class="tab" data-tab="local" type="button">本機榜</button>
+          <button class="tab" data-tab="global" type="button">全站榜</button>
         </div>
         <ol id="roomLeaderboard" class="score-list"></ol>
         <ol id="localLeaderboard" class="score-list" hidden></ol>
+        <div id="globalLeaderboardPanel" class="global-leaderboard-panel" hidden>
+          <label class="field tight">
+            <span>全站排行榜</span>
+            <select id="globalScopeSelect">
+              <option value="daily">今日</option>
+              <option value="weekly">本週</option>
+              <option value="allTime">歷史最高</option>
+            </select>
+          </label>
+          <ol id="globalLeaderboard" class="score-list"></ol>
+          <small>全站榜會寫入 Firebase。單人分數、競賽個人成績、合作團隊成績都可上榜。</small>
+        </div>
       </aside>
     </section>
   </main>
@@ -213,6 +246,19 @@
       <span class="hit-pop">+1</span>
     </button>
   </template>
+
+  <dialog id="tutorialDialog" class="result-dialog result-dialog-wide tutorial-dialog">
+    <h2>新手教學</h2>
+    <div class="tutorial-steps">
+      <div><strong>1. 單人練習</strong><p>選難度、時間、主題與地鼠圖案後，按「開始遊戲」。普通 +1、黃金 +5、炸彈 -3、愛心 +3 秒。</p></div>
+      <div><strong>2. 多人房間</strong><p>輸入暱稱後建立房間，分享房號、邀請連結或 QR Code。朋友掃碼後就能加入。</p></div>
+      <div><strong>3. 合作 / 競賽</strong><p>合作模式大家一起累積團隊分數；競賽模式每位玩家各自計分。</p></div>
+      <div><strong>4. 房主控制</strong><p>房主可鎖定房間、重開本局、清除離線玩家，也可在房間榜踢出玩家。</p></div>
+      <div><strong>5. 成就與全站榜</strong><p>結算後會解鎖成就，成績也會送到今日、本週與歷史排行榜。</p></div>
+    </div>
+    <label class="tutorial-check"><input id="dontShowTutorialAgain" type="checkbox" checked /> 下次不要自動顯示</label>
+    <button id="closeTutorialBtn" class="primary" type="button">開始玩</button>
+  </dialog>
 
   <dialog id="resultDialog" class="result-dialog result-dialog-wide">
     <h2 id="resultTitle">遊戲結束</h2>

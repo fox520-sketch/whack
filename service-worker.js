@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shushu-chumo-v5-qrfix';
+const CACHE_NAME = 'shushu-chumo-v6-host-leaderboard-achievements';
 const APP_SHELL = [
   './',
   './index.html',
