@@ -21,7 +21,9 @@ import {
   incrementMyScore,
   claimCoopHit,
   subscribeRoom,
-  getUid
+  getUid,
+  touchMyPresence,
+  ROOM_TTL_MS
 } from './firebase-game.js';
 
 const $ = selector => document.querySelector(selector);
@@ -52,6 +54,15 @@ const els = {
   roomCodeInput: $('#roomCodeInput'),
   joinRoomBtn: $('#joinRoomBtn'),
   firebaseNotice: $('#firebaseNotice'),
+  roomShareCard: $('#roomShareCard'),
+  shareRoomCode: $('#shareRoomCode'),
+  roomQrCanvas: $('#roomQrCanvas'),
+  inviteLink: $('#inviteLink'),
+  copyInviteBtn: $('#copyInviteBtn'),
+  refreshQrBtn: $('#refreshQrBtn'),
+  roomExpiryLabel: $('#roomExpiryLabel'),
+  installPwaBtn: $('#installPwaBtn'),
+  pwaHint: $('#pwaHint'),
   modeLabel: $('#modeLabel'),
   roomCodeLabel: $('#roomCodeLabel'),
   scoreTitle: $('#scoreTitle'),
@@ -77,6 +88,9 @@ const state = {
   isHost: false,
   room: null,
   roomUnsubscribe: null,
+  presenceTimer: null,
+  expiryTimer: null,
+  deferredInstallPrompt: null,
   hostTimer: null,
   singleTimer: null,
   clockTimer: null,
@@ -111,6 +125,9 @@ function init() {
   updateTopbar();
   updateCustomMolePreview();
   updateUploadVisibility();
+  setupInviteFromUrl();
+  setupPwaInstall();
+  registerServiceWorker();
 }
 
 function fillSelects() {
@@ -218,6 +235,11 @@ function bindEvents() {
   els.roomCodeInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') handleJoinRoom();
   });
+  els.copyInviteBtn.addEventListener('click', copyInviteLink);
+  els.refreshQrBtn.addEventListener('click', () => {
+    if (state.roomCode) renderRoomQrCode(getInviteUrl(state.roomCode));
+  });
+  els.installPwaBtn.addEventListener('click', installPwa);
 
   els.startGameBtn.addEventListener('click', () => {
     if (state.mode === 'online') handleOnlineStart();
@@ -233,7 +255,58 @@ function bindEvents() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.mode === 'online' && state.room) updateOnlineClock(state.room);
+    if (!document.hidden && state.mode === 'online' && state.room) {
+      updateOnlineClock(state.room);
+      touchMyPresence(state.roomCode).catch(() => {});
+    }
+  });
+
+  window.addEventListener('pagehide', () => {
+    if (state.roomCode) leaveRoom(state.roomCode).catch(() => {});
+  });
+}
+
+function setupInviteFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const room = String(params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  if (!room) return;
+  els.roomCodeInput.value = room;
+  setStatus(`已從邀請連結帶入房號 ${room}，輸入暱稱後按「加入」。`);
+  $('#multiplayerPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function setupPwaInstall() {
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    state.deferredInstallPrompt = event;
+    els.installPwaBtn.hidden = false;
+    els.pwaHint.textContent = '可安裝囉！按下按鈕後選擇安裝即可。';
+  });
+
+  window.addEventListener('appinstalled', () => {
+    state.deferredInstallPrompt = null;
+    els.installPwaBtn.hidden = true;
+    els.pwaHint.textContent = '已安裝完成，可從桌面開啟「鼠叔出沒」。';
+  });
+}
+
+async function installPwa() {
+  if (!state.deferredInstallPrompt) {
+    setStatus('目前瀏覽器尚未提供安裝按鈕。iPhone 請用 Safari 分享 → 加到主畫面。');
+    return;
+  }
+  state.deferredInstallPrompt.prompt();
+  await state.deferredInstallPrompt.userChoice.catch(() => null);
+  state.deferredInstallPrompt = null;
+  els.installPwaBtn.hidden = true;
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {
+      // The game still works without the offline shell cache.
+    });
   });
 }
 
@@ -594,6 +667,8 @@ async function enterOnlineRoom(roomCode, uid) {
   els.roomCodeInput.value = roomCode;
   els.startGameBtn.textContent = '開始多人遊戲';
   updateTopbar();
+  updateRoomShare({ roomCode, expiresAt: now() + ROOM_TTL_MS });
+  startPresence(roomCode);
 
   state.roomUnsubscribe = await subscribeRoom(roomCode, handleRoomUpdate);
 }
@@ -610,6 +685,7 @@ function handleRoomUpdate(room) {
   state.score = Number(room.players?.[state.uid]?.score || 0);
   state.teamScore = Number(room.teamScore || 0);
   state.multiplayerMode = room.gameMode || 'coop';
+  updateRoomShare(room);
 
   if (room.moleVisual) {
     state.moleVisual = room.moleVisual;
@@ -748,6 +824,7 @@ async function handleLeaveRoom(announce = true) {
 
 function resetToSingleMode() {
   clearTimers();
+  stopPresence();
   if (state.roomUnsubscribe) state.roomUnsubscribe();
   state.mode = 'single';
   state.roomCode = '';
@@ -762,6 +839,7 @@ function resetToSingleMode() {
   els.leaveRoomBtn.hidden = true;
   els.startGameBtn.disabled = false;
   els.startGameBtn.textContent = '開始遊戲';
+  els.roomShareCard.hidden = true;
   buildBoard(getLevelConfig(els.levelRange.value).boardSize);
   renderRoomLeaderboard([]);
   updateTopbar();
@@ -821,13 +899,141 @@ function renderRoomLeaderboard(players, roomMode = 'coop') {
     ? `<li class="team-score-row"><span>🤝</span><span>團隊合作分數</span><strong>${state.teamScore}</strong></li>`
     : '';
 
-  els.roomLeaderboard.innerHTML = teamHeader + list.map((player, index) => `
-    <li>
-      <span class="rank">${index + 1}</span>
-      <span>${escapeHtml(player.name)}${player.uid === state.uid ? '（你）' : ''}<br><small>${player.active ? '在線' : '離線'}・${scoreLabel}</small></span>
-      <strong>${Number(player.score || 0)}</strong>
-    </li>
-  `).join('');
+  els.roomLeaderboard.innerHTML = teamHeader + list.map((player, index) => {
+    const lastSeen = Number(player.lastSeen || 0);
+    const recentlySeen = lastSeen > 0 && now() - lastSeen < 45_000;
+    const online = Boolean(player.active) && recentlySeen;
+    const presenceText = online ? '在線' : `離線${lastSeen ? `・${formatLastSeen(lastSeen)}` : ''}`;
+    return `
+      <li class="${online ? 'online-player' : 'offline-player'}">
+        <span class="rank">${index + 1}</span>
+        <span>${escapeHtml(player.name)}${player.uid === state.uid ? '（你）' : ''}<br><small><span class="presence-dot"></span>${presenceText}・${scoreLabel}</small></span>
+        <strong>${Number(player.score || 0)}</strong>
+      </li>
+    `;
+  }).join('');
+}
+
+function startPresence(roomCode) {
+  stopPresence();
+  touchMyPresence(roomCode).catch(() => {});
+  state.presenceTimer = setInterval(() => {
+    if (state.mode === 'online' && state.roomCode) {
+      touchMyPresence(state.roomCode).catch(() => {});
+    }
+  }, 20_000);
+}
+
+function stopPresence() {
+  clearInterval(state.presenceTimer);
+  clearInterval(state.expiryTimer);
+  state.presenceTimer = null;
+  state.expiryTimer = null;
+}
+
+function updateRoomShare(room) {
+  const roomCode = room?.roomCode || state.roomCode;
+  if (!roomCode) {
+    els.roomShareCard.hidden = true;
+    return;
+  }
+
+  els.roomShareCard.hidden = false;
+  els.shareRoomCode.textContent = roomCode;
+  const url = getInviteUrl(roomCode);
+  els.inviteLink.href = url;
+  els.inviteLink.textContent = url;
+  renderRoomQrCode(url);
+
+  const updateExpiryText = () => {
+    const expiresAt = Number(room?.expiresAt || 0);
+    if (!expiresAt) {
+      els.roomExpiryLabel.textContent = '房間建立後會自動過期。';
+      return;
+    }
+    const remaining = expiresAt - now();
+    if (remaining <= 0) {
+      els.roomExpiryLabel.textContent = '房間已過期，請重新建立。';
+      return;
+    }
+    els.roomExpiryLabel.textContent = `房間約 ${formatTimeLeft(remaining)} 後自動過期，開始遊戲會重新延長。`;
+  };
+
+  updateExpiryText();
+  clearInterval(state.expiryTimer);
+  state.expiryTimer = setInterval(updateExpiryText, 30_000);
+}
+
+function getInviteUrl(roomCode) {
+  const url = new URL(window.location.href);
+  url.hash = '';
+  url.searchParams.set('room', roomCode);
+  return url.toString();
+}
+
+async function copyInviteLink() {
+  if (!state.roomCode) return;
+  const url = getInviteUrl(state.roomCode);
+  try {
+    await navigator.clipboard.writeText(url);
+    setStatus('已複製邀請連結，可以貼給朋友加入房間。');
+  } catch {
+    window.prompt('請複製這個邀請連結：', url);
+  }
+}
+
+function renderRoomQrCode(url) {
+  const canvas = els.roomQrCanvas;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (window.QRCode?.toCanvas) {
+    window.QRCode.toCanvas(canvas, url, {
+      width: 176,
+      margin: 1,
+      errorCorrectionLevel: 'M'
+    }, error => {
+      if (error) drawQrFallback(canvas);
+    });
+    return;
+  }
+
+  drawQrFallback(canvas);
+  setTimeout(() => {
+    if (state.roomCode && window.QRCode?.toCanvas) renderRoomQrCode(url);
+  }, 1000);
+}
+
+function drawQrFallback(canvas) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('QR 載入中', canvas.width / 2, 78);
+  ctx.font = '12px sans-serif';
+  ctx.fillText('也可直接複製邀請連結', canvas.width / 2, 104);
+}
+
+function formatTimeLeft(ms) {
+  const minutes = Math.max(0, Math.ceil(ms / 60_000));
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest ? `${hours} 小時 ${rest} 分鐘` : `${hours} 小時`;
+  }
+  return `${minutes} 分鐘`;
+}
+
+function formatLastSeen(timestamp) {
+  const seconds = Math.max(1, Math.round((now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分前`;
+  return `${Math.round(minutes / 60)} 小時前`;
 }
 
 function switchLeaderboardTab(tabName) {

@@ -869,3 +869,101 @@ button.ghost:not(:disabled):active {
     grid-template-columns: 1fr;
   }
 }
+
+/* v3 room sharing, presence, room expiry, and PWA install */
+.room-share-card,
+.install-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--card-solid) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.install-card h3,
+.install-card p {
+  margin-bottom: 0;
+}
+
+.share-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.share-header span {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.share-header strong {
+  letter-spacing: 0.14em;
+  font-size: 1.1rem;
+}
+
+#roomQrCanvas {
+  justify-self: center;
+  width: 176px;
+  height: 176px;
+  padding: 8px;
+  border-radius: 18px;
+  background: white;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+
+.invite-link {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 8px 10px;
+  border-radius: 14px;
+  color: var(--primary-strong);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  text-decoration: none;
+  font-size: 0.88rem;
+}
+
+.share-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.presence-dot {
+  display: inline-block;
+  width: 0.62em;
+  height: 0.62em;
+  margin-right: 0.35em;
+  border-radius: 50%;
+  background: #94a3b8;
+  vertical-align: baseline;
+}
+
+.online-player .presence-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+}
+
+.offline-player {
+  opacity: 0.72;
+}
+
+.offline-player .presence-dot {
+  background: #94a3b8;
+}
+
+@media (max-width: 680px) {
+  .share-actions {
+    grid-template-columns: 1fr;
+  }
+
+  #roomQrCanvas {
+    width: 168px;
+    height: 168px;
+  }
+}

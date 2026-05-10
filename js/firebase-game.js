@@ -20,6 +20,8 @@ import {
 import { firebaseConfig, hasFirebaseConfig } from './firebase-config.js';
 import { createRoomCode, getLevelConfig, now } from './game-settings.js';
 
+export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
+
 let app = null;
 let auth = null;
 let db = null;
@@ -62,6 +64,13 @@ export async function ensureFirebase() {
   return { app, auth, db, user };
 }
 
+async function cleanupExpiredRoomIfNeeded(roomCode, room) {
+  if (!room || !room.expiresAt || Number(room.expiresAt) > now()) return false;
+  const { db: database } = await ensureFirebase();
+  await remove(ref(database, `rooms/${roomCode}`));
+  return true;
+}
+
 async function findAvailableRoomCode() {
   const { db: database } = await ensureFirebase();
   for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -89,6 +98,8 @@ export async function createRoom({ playerName, level, theme, duration, gameMode 
   const levelConfig = getLevelConfig(level);
   const roomRef = ref(database, `rooms/${roomCode}`);
 
+  const createdAt = now();
+
   await set(roomRef, {
     roomCode,
     hostId: user.uid,
@@ -107,6 +118,8 @@ export async function createRoom({ playerName, level, theme, duration, gameMode 
     hitClaims: {},
     startedAt: 0,
     endsAt: 0,
+    createdAt,
+    expiresAt: createdAt + ROOM_TTL_MS,
     updatedAt: serverTimestamp(),
     players: {
       [user.uid]: {
@@ -133,6 +146,11 @@ export async function joinRoom({ roomCode, playerName }) {
   const roomRef = ref(database, `rooms/${normalizedCode}`);
   const snapshot = await get(roomRef);
   if (!snapshot.exists()) throw new Error('找不到這個房間，請確認房號是否正確。');
+  const room = snapshot.val();
+  if (room.expiresAt && Number(room.expiresAt) <= now()) {
+    await cleanupExpiredRoomIfNeeded(normalizedCode, room);
+    throw new Error('這個房間已過期，請房主重新建立房間。');
+  }
 
   await set(ref(database, `rooms/${normalizedCode}/players/${user.uid}`), {
     name: playerName,
@@ -191,6 +209,7 @@ export async function startRoomGame({ roomCode, level, theme, duration, gameMode
     hitClaims: null,
     startedAt: start,
     endsAt: end,
+    expiresAt: now() + ROOM_TTL_MS,
     updatedAt: serverTimestamp()
   });
 }
@@ -277,7 +296,19 @@ export async function getUid() {
 export async function subscribeRoom(roomCode, callback) {
   const { db: database } = await ensureFirebase();
   const roomRef = ref(database, `rooms/${roomCode}`);
-  return onValue(roomRef, snapshot => callback(snapshot.val()));
+  return onValue(roomRef, async snapshot => {
+    const room = snapshot.val();
+    if (room && room.expiresAt && Number(room.expiresAt) <= now()) {
+      try {
+        await cleanupExpiredRoomIfNeeded(roomCode, room);
+      } catch {
+        // Rules may already have removed it or another client may be cleaning it up.
+      }
+      callback(null);
+      return;
+    }
+    callback(room);
+  });
 }
 
 export async function cleanupOldRoom(roomCode) {
@@ -288,4 +319,14 @@ export async function cleanupOldRoom(roomCode) {
   if (room.hostId === user.uid && room.status === 'ended') {
     await remove(ref(database, `rooms/${roomCode}`));
   }
+}
+
+export async function removeExpiredRoom(roomCode) {
+  const { db: database } = await ensureFirebase();
+  const snapshot = await get(ref(database, `rooms/${roomCode}`));
+  if (!snapshot.exists()) return false;
+  const room = snapshot.val();
+  if (!room.expiresAt || Number(room.expiresAt) > now()) return false;
+  await remove(ref(database, `rooms/${roomCode}`));
+  return true;
 }

@@ -12,6 +12,10 @@
 - 語音音效：打中可播放「打到了」，沒打中可播放「喔喔」。
 - 自訂錄音檔：可上傳打中音效與沒打中音效，建議小於 700KB。
 - 20 級難度、多主題、手機觸控、房間排行榜、本機排行榜。
+- 房間 QR Code：建立房間後可直接掃描加入，也可複製邀請連結。
+- 離線偵測：玩家關閉網頁或斷線後，排行榜會顯示離線狀態與最後出現時間。
+- 房間自動過期：房間預設約 2 小時後過期，開始遊戲會重新延長。
+- PWA 安裝：支援加入手機桌面，並提供基本離線 App Shell 快取。
 
 ## 檔案結構
 
@@ -24,6 +28,11 @@ ocean-whack-a-mole-firebase/
 ├─ js/firebase-game.js
 ├─ js/game-settings.js
 ├─ js/sounds.js
+├─ icons/
+│  ├─ icon-192.png
+│  └─ icon-512.png
+├─ manifest.webmanifest
+├─ service-worker.js
 ├─ firebase-rules.json
 └─ README.md
 ```
@@ -103,7 +112,7 @@ firebase-rules.json
 Realtime Database → 規則 → 貼上 → 發布
 ```
 
-如果你已經發布過舊版規則，這次一定要重新發布新版規則，因為合作模式新增了 `gameMode`、`teamScore`、`hitClaims`、`moleVisual` 等資料欄位。
+如果你已經發布過舊版規則，這次一定要重新發布新版規則，因為此版本新增了 `gameMode`、`teamScore`、`hitClaims`、`moleVisual`、`createdAt`、`expiresAt` 等資料欄位。
 
 ## GitHub Pages 部署
 
@@ -117,8 +126,8 @@ Realtime Database → 規則 → 貼上 → 發布
 ## 多人合作模式玩法
 
 1. 房主選擇「合作共分」。
-2. 房主建立房間並分享 6 位數房號。
-3. 其他玩家輸入房號加入。
+2. 房主建立房間並分享 6 位數房號、邀請連結或 QR Code。
+3. 其他玩家輸入房號，或掃描 QR Code 後加入。
 4. 房主按「開始多人遊戲」。
 5. 所有人會看到同一批地鼠。
 6. 同一隻地鼠由最先打到的玩家幫全隊加 1 分。
@@ -155,3 +164,20 @@ Realtime Database → 規則 → 貼上 → 發布
 
 - 電腦版 9 個洞固定以 3 排 3 列呈現。
 - 高難度的 12 / 16 洞仍保留較大的 4 欄配置，避免洞口過小。
+
+## v3 更新
+
+- 新增房間 QR Code 與邀請連結。網址會帶上 `?room=房號`，朋友開啟後會自動帶入房號。
+- 新增玩家離線偵測：進入房間後每 20 秒更新一次 `lastSeen`，關閉頁面時會標記離線。
+- 新增房間自動過期：房間約 2 小時後過期；房主開始遊戲時會重新延長 2 小時。
+- 新增 PWA：包含 `manifest.webmanifest`、`service-worker.js` 與 192/512 圖示，可加入手機桌面。
+
+### PWA 安裝方式
+
+Android / Chrome：如果瀏覽器支援安裝，遊戲左側會出現「安裝到手機 / 桌面」按鈕。
+
+iPhone / iPad：請使用 Safari 開啟網站，點分享按鈕，選「加入主畫面」。
+
+### QR Code 注意事項
+
+QR Code 使用瀏覽器端套件產生。若網路載入套件失敗，仍可使用「複製邀請連結」或手動輸入房號。
