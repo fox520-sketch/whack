@@ -1,5 +1,14 @@
 # 鼠叔出沒 Firebase 多人合作版
 
+## v5 新功能
+
+- 結算畫面升級：總分、命中率、最高連擊、MVP、Boss 命中數、S/A/B/C 評級。
+- 特殊地鼠：普通 +1、黃金地鼠 +5、炸彈地鼠 -3 並中斷連擊、愛心地鼠 +3 秒。
+- 合作任務模式：限時達標與 Boss 地鼠。Boss 需要多人連打削減 HP。
+- 手機操作優化：點擊特效、失誤震動、打中震動、特殊地鼠視覺提示。
+- Firebase Rules 已更新，部署 v5 時請重新到 Realtime Database → 規則貼上 `firebase-rules.json` 並發布。
+
+
 這是一個可部署到 GitHub Pages 的靜態網頁遊戲。多人功能使用 Firebase Authentication 匿名登入與 Realtime Database 即時同步，不需要 Node.js 伺服器。
 
 ## 新增功能

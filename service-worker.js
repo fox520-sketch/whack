@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shushu-chumo-v4';
+const CACHE_NAME = 'shushu-chumo-v5';
 const APP_SHELL = [
   './',
   './index.html',

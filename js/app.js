@@ -3,10 +3,15 @@ import {
   MOLE_VISUALS,
   HIT_SOUND_PRESETS,
   MISS_SOUND_PRESETS,
+  MISSION_MODES,
   clampName,
   getLevelConfig,
   pickRandomHole,
   getBuiltInMole,
+  pickMoleType,
+  getMoleType,
+  calculateTargetScore,
+  calculateBossHp,
   now
 } from './game-settings.js';
 import { Sound } from './sounds.js';
@@ -18,8 +23,10 @@ import {
   startRoomGame,
   endRoomGame,
   publishMole,
-  incrementMyScore,
+  applyPlayerHit,
+  recordPlayerMiss,
   claimCoopHit,
+  claimBossHit,
   subscribeRoom,
   getUid,
   touchMyPresence,
@@ -38,6 +45,8 @@ const els = {
   levelText: $('#levelText'),
   levelHint: $('#levelHint'),
   durationSelect: $('#durationSelect'),
+  missionModeSelect: $('#missionModeSelect'),
+  missionHint: $('#missionHint'),
   themeSelect: $('#themeSelect'),
   multiplayerModeSelect: $('#multiplayerModeSelect'),
   moleSelect: $('#moleSelect'),
@@ -71,12 +80,14 @@ const els = {
   scoreLabel: $('#scoreLabel'),
   timeLabel: $('#timeLabel'),
   statusStrip: $('#statusStrip'),
+  missionStrip: $('#missionStrip'),
   gameBoard: $('#gameBoard'),
   startGameBtn: $('#startGameBtn'),
   leaveRoomBtn: $('#leaveRoomBtn'),
   roomLeaderboard: $('#roomLeaderboard'),
   localLeaderboard: $('#localLeaderboard'),
   resultDialog: $('#resultDialog'),
+  resultTitle: $('#resultTitle'),
   resultText: $('#resultText'),
   closeResultBtn: $('#closeResultBtn'),
   holeTemplate: $('#holeTemplate')
@@ -85,6 +96,7 @@ const els = {
 const state = {
   mode: 'single',
   multiplayerMode: 'coop',
+  missionMode: 'classic',
   roomCode: '',
   uid: '',
   isHost: false,
@@ -100,9 +112,16 @@ const state = {
   boardSize: 9,
   currentMole: -1,
   currentMoleKey: '',
+  currentMoleType: 'normal',
+  currentMoleValue: 1,
+  moleSequence: 0,
   lastHitMoleKey: '',
+  lastBossHitAt: 0,
   score: 0,
   teamScore: 0,
+  targetScore: 0,
+  bossHp: 0,
+  bossMaxHp: 0,
   playing: false,
   endsAt: 0,
   endedDialogKey: '',
@@ -110,21 +129,28 @@ const state = {
   moleVisual: { type: 'emoji', value: '🐹', label: '經典地鼠' },
   customMoleDataUrl: '',
   customHitSound: '',
-  customMissSound: ''
+  customMissSound: '',
+  stats: createStats()
 };
 
 init();
+
+function createStats() {
+  return { hits: 0, misses: 0, combo: 0, maxCombo: 0, bossHits: 0 };
+}
 
 function init() {
   fillSelects();
   restorePreferences();
   bindEvents();
   updateLevelUi();
+  updateMissionUi();
   buildBoard(getLevelConfig(els.levelRange.value).boardSize);
   updateLocalLeaderboard();
   renderRoomLeaderboard([]);
   updateFirebaseNotice();
   updateTopbar();
+  updateMissionStrip();
   updateCustomMolePreview();
   updateUploadVisibility();
   setupInviteFromUrl();
@@ -133,29 +159,13 @@ function init() {
 }
 
 function fillSelects() {
-  els.themeSelect.innerHTML = THEMES
-    .map(theme => `<option value="${theme.id}">${theme.emoji} ${theme.label}</option>`)
-    .join('');
-
-  els.moleSelect.innerHTML = MOLE_VISUALS
-    .map(item => `<option value="${item.id}">${item.emoji} ${item.label}</option>`)
-    .join('');
-
-  els.hitSoundSelect.innerHTML = HIT_SOUND_PRESETS
-    .map(item => `<option value="${item.id}">${item.label}</option>`)
-    .join('');
-
-  els.missSoundSelect.innerHTML = MISS_SOUND_PRESETS
-    .map(item => `<option value="${item.id}">${item.label}</option>`)
-    .join('');
-
-  els.hitSoundCards.innerHTML = HIT_SOUND_PRESETS
-    .map(item => soundButtonMarkup(item, 'hit'))
-    .join('');
-
-  els.missSoundCards.innerHTML = MISS_SOUND_PRESETS
-    .map(item => soundButtonMarkup(item, 'miss'))
-    .join('');
+  els.themeSelect.innerHTML = THEMES.map(theme => `<option value="${theme.id}">${theme.emoji} ${theme.label}</option>`).join('');
+  els.missionModeSelect.innerHTML = MISSION_MODES.map(mode => `<option value="${mode.id}">${mode.label}</option>`).join('');
+  els.moleSelect.innerHTML = MOLE_VISUALS.map(item => `<option value="${item.id}">${item.emoji} ${item.label}</option>`).join('');
+  els.hitSoundSelect.innerHTML = HIT_SOUND_PRESETS.map(item => `<option value="${item.id}">${item.label}</option>`).join('');
+  els.missSoundSelect.innerHTML = MISS_SOUND_PRESETS.map(item => `<option value="${item.id}">${item.label}</option>`).join('');
+  els.hitSoundCards.innerHTML = HIT_SOUND_PRESETS.map(item => soundButtonMarkup(item, 'hit')).join('');
+  els.missSoundCards.innerHTML = MISS_SOUND_PRESETS.map(item => soundButtonMarkup(item, 'miss')).join('');
 }
 
 function soundButtonMarkup(item, type) {
@@ -166,6 +176,7 @@ function restorePreferences() {
   els.playerName.value = localStorage.getItem('wam.playerName') || '';
   els.levelRange.value = localStorage.getItem('wam.level') || '1';
   els.durationSelect.value = localStorage.getItem('wam.duration') || '45';
+  els.missionModeSelect.value = localStorage.getItem('wam.missionMode') || 'classic';
   els.themeSelect.value = localStorage.getItem('wam.theme') || 'ocean';
   els.multiplayerModeSelect.value = localStorage.getItem('wam.multiplayerMode') || 'coop';
   els.moleSelect.value = localStorage.getItem('wam.moleId') || 'hamster';
@@ -174,6 +185,7 @@ function restorePreferences() {
   els.soundToggle.checked = localStorage.getItem('wam.sound') !== 'off';
 
   state.multiplayerMode = els.multiplayerModeSelect.value;
+  state.missionMode = els.missionModeSelect.value;
   state.customMoleDataUrl = localStorage.getItem('wam.customMoleImage') || '';
   state.customHitSound = localStorage.getItem('wam.customHitSound') || '';
   state.customMissSound = localStorage.getItem('wam.customMissSound') || '';
@@ -197,11 +209,19 @@ function bindEvents() {
   els.levelRange.addEventListener('input', () => {
     localStorage.setItem('wam.level', els.levelRange.value);
     updateLevelUi();
+    updateMissionUi();
     if (!state.playing && state.mode === 'single') buildBoard(getLevelConfig(els.levelRange.value).boardSize);
   });
   els.durationSelect.addEventListener('change', () => {
     localStorage.setItem('wam.duration', els.durationSelect.value);
+    updateMissionUi();
     if (!state.playing) updateTopbar();
+  });
+  els.missionModeSelect.addEventListener('change', () => {
+    state.missionMode = els.missionModeSelect.value;
+    localStorage.setItem('wam.missionMode', state.missionMode);
+    updateMissionUi();
+    updateMissionStrip();
   });
   els.themeSelect.addEventListener('change', () => {
     localStorage.setItem('wam.theme', els.themeSelect.value);
@@ -210,6 +230,7 @@ function bindEvents() {
   els.multiplayerModeSelect.addEventListener('change', () => {
     state.multiplayerMode = els.multiplayerModeSelect.value;
     localStorage.setItem('wam.multiplayerMode', state.multiplayerMode);
+    updateMissionUi();
     updateTopbar();
   });
   els.moleSelect.addEventListener('change', () => {
@@ -221,32 +242,20 @@ function bindEvents() {
   });
   els.moleUpload.addEventListener('change', handleMoleUpload);
 
-  els.hitSoundSelect.addEventListener('change', () => {
-    handleHitSoundChoice(els.hitSoundSelect.value, { preview: true });
-  });
-  els.missSoundSelect.addEventListener('change', () => {
-    handleMissSoundChoice(els.missSoundSelect.value, { preview: true });
-  });
+  els.hitSoundSelect.addEventListener('change', () => handleHitSoundChoice(els.hitSoundSelect.value, { preview: true }));
+  els.missSoundSelect.addEventListener('change', () => handleMissSoundChoice(els.missSoundSelect.value, { preview: true }));
   els.hitSoundCards.addEventListener('click', event => {
     const button = event.target.closest('button[data-sound-id]');
-    if (!button) return;
-    handleHitSoundChoice(button.dataset.soundId, { preview: true });
+    if (button) handleHitSoundChoice(button.dataset.soundId, { preview: true });
   });
   els.missSoundCards.addEventListener('click', event => {
     const button = event.target.closest('button[data-sound-id]');
-    if (!button) return;
-    handleMissSoundChoice(button.dataset.soundId, { preview: true });
+    if (button) handleMissSoundChoice(button.dataset.soundId, { preview: true });
   });
   els.hitSoundUpload.addEventListener('change', event => handleAudioUpload(event, 'hit'));
   els.missSoundUpload.addEventListener('change', event => handleAudioUpload(event, 'miss'));
-  els.previewHitSound.addEventListener('click', () => {
-    Sound.unlock();
-    Sound.previewHit();
-  });
-  els.previewMissSound.addEventListener('click', () => {
-    Sound.unlock();
-    Sound.previewMiss();
-  });
+  els.previewHitSound.addEventListener('click', () => { Sound.unlock(); Sound.previewHit(); });
+  els.previewMissSound.addEventListener('click', () => { Sound.unlock(); Sound.previewMiss(); });
 
   els.soundToggle.addEventListener('change', () => {
     localStorage.setItem('wam.sound', els.soundToggle.checked ? 'on' : 'off');
@@ -274,12 +283,9 @@ function bindEvents() {
   });
   els.leaveRoomBtn.addEventListener('click', handleLeaveRoom);
   els.closeResultBtn.addEventListener('click', () => els.resultDialog.close());
-
   els.gameBoard.addEventListener('pointerdown', handleHolePress);
 
-  $$('.tab').forEach(button => {
-    button.addEventListener('click', () => switchLeaderboardTab(button.dataset.tab));
-  });
+  $$('.tab').forEach(button => button.addEventListener('click', () => switchLeaderboardTab(button.dataset.tab)));
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.mode === 'online' && state.room) {
@@ -319,7 +325,6 @@ function syncSoundChoiceButtons() {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
-
   $$('#missSoundCards .sound-card').forEach(button => {
     const active = button.dataset.soundId === els.missSoundSelect.value;
     button.classList.toggle('active', active);
@@ -327,62 +332,33 @@ function syncSoundChoiceButtons() {
   });
 }
 
-function setupInviteFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const room = String(params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-  if (!room) return;
-  els.roomCodeInput.value = room;
-  setStatus(`已從邀請連結帶入房號 ${room}，輸入暱稱後按「加入」。`);
-  $('#multiplayerPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-function setupPwaInstall() {
-  window.addEventListener('beforeinstallprompt', event => {
-    event.preventDefault();
-    state.deferredInstallPrompt = event;
-    els.installPwaBtn.hidden = false;
-    els.pwaHint.textContent = '可安裝囉！按下按鈕後選擇安裝即可。';
-  });
-
-  window.addEventListener('appinstalled', () => {
-    state.deferredInstallPrompt = null;
-    els.installPwaBtn.hidden = true;
-    els.pwaHint.textContent = '已安裝完成，可從桌面開啟「鼠叔出沒」。';
-  });
-}
-
-async function installPwa() {
-  if (!state.deferredInstallPrompt) {
-    setStatus('目前瀏覽器尚未提供安裝按鈕。iPhone 請用 Safari 分享 → 加到主畫面。');
-    return;
-  }
-  state.deferredInstallPrompt.prompt();
-  await state.deferredInstallPrompt.userChoice.catch(() => null);
-  state.deferredInstallPrompt = null;
-  els.installPwaBtn.hidden = true;
-}
-
-function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch(() => {
-      // The game still works without the offline shell cache.
-    });
-  });
-}
-
 function updateFirebaseNotice() {
-  if (isFirebaseConfigured()) {
-    els.firebaseNotice.textContent = 'Firebase 已設定，可以建立或加入多人房間。';
-  } else {
-    els.firebaseNotice.textContent = '多人模式需要先修改 js/firebase-config.js 並設定 Firebase。';
-  }
+  els.firebaseNotice.textContent = isFirebaseConfigured()
+    ? 'Firebase 已設定，可以建立或加入多人房間。'
+    : '多人模式需要先修改 js/firebase-config.js 並設定 Firebase。';
 }
 
 function updateLevelUi() {
   const config = getLevelConfig(els.levelRange.value);
   els.levelText.textContent = config.level;
   els.levelHint.textContent = config.label;
+}
+
+function updateMissionUi() {
+  const mission = MISSION_MODES.find(item => item.id === els.missionModeSelect.value) || MISSION_MODES[0];
+  const target = calculateTargetScore({
+    level: Number(els.levelRange.value),
+    duration: Number(els.durationSelect.value),
+    playerCount: state.room ? Object.keys(state.room.players || {}).length : 1,
+    missionMode: mission.id
+  });
+  const bossHp = calculateBossHp({
+    level: Number(els.levelRange.value),
+    playerCount: state.room ? Object.keys(state.room.players || {}).length : 1
+  });
+  if (mission.id === 'target') els.missionHint.textContent = `${mission.description} 建議目標約 ${target} 分。`;
+  else if (mission.id === 'boss') els.missionHint.textContent = `${mission.description} 預估 Boss 血量 ${bossHp}。`;
+  else els.missionHint.textContent = mission.description;
 }
 
 function getPlayerName() {
@@ -418,12 +394,59 @@ function applyMoleVisual() {
   const visual = state.moleVisual || { type: 'emoji', value: '🐹', label: '地鼠' };
   $$('.mole').forEach(mole => {
     mole.classList.toggle('custom-image', visual.type === 'image');
-    if (visual.type === 'image') {
-      mole.innerHTML = `<img src="${escapeAttribute(visual.value)}" alt="${escapeAttribute(visual.label)}" />`;
-    } else {
-      mole.textContent = visual.value || '🐹';
-    }
+    if (visual.type === 'image') mole.innerHTML = `<img src="${escapeAttribute(visual.value)}" alt="${escapeAttribute(visual.label)}" />`;
+    else mole.textContent = visual.value || '🐹';
   });
+}
+
+function setActiveMole(index, moleKey = '', moleType = 'normal', moleValue = 1) {
+  state.currentMole = index;
+  state.currentMoleKey = moleKey;
+  state.currentMoleType = moleType || 'normal';
+  state.currentMoleValue = Number(moleValue || getMoleType(moleType).score || 1);
+  const type = getMoleType(state.currentMoleType);
+  $$('.hole').forEach(hole => {
+    const active = Number(hole.dataset.index) === Number(index);
+    hole.classList.toggle('active', active);
+    hole.dataset.moleType = active ? type.id : '';
+    const badge = hole.querySelector('.mole-badge');
+    if (badge) badge.textContent = active ? type.emoji : '';
+    if (!active) hole.classList.remove('hit', 'bad-hit', 'heart-hit', 'boss-hit', 'miss-tap');
+  });
+}
+
+function triggerHitEffect(hole, moleType, text) {
+  const type = getMoleType(moleType);
+  const pop = hole.querySelector('.hit-pop');
+  if (pop) pop.textContent = text || type.pop;
+  hole.classList.remove('hit', 'bad-hit', 'heart-hit', 'boss-hit');
+  void hole.offsetWidth;
+  hole.classList.add('hit');
+  if (type.id === 'bomb') hole.classList.add('bad-hit');
+  if (type.id === 'heart') hole.classList.add('heart-hit');
+  if (type.id === 'boss') hole.classList.add('boss-hit');
+}
+
+function triggerMissEffect(hole = null) {
+  const target = hole || els.gameBoard;
+  target.classList.remove('miss-tap');
+  void target.offsetWidth;
+  target.classList.add('miss-tap');
+  setTimeout(() => target.classList.remove('miss-tap'), 220);
+}
+
+function vibrate(pattern) {
+  if ('vibrate' in navigator) navigator.vibrate(pattern);
+}
+
+function updateStatsForLocal({ scoreDelta = 0, hit = false, miss = false, bossHit = false } = {}) {
+  state.score = Math.max(0, state.score + Number(scoreDelta || 0));
+  if (hit) state.stats.hits += 1;
+  if (miss) state.stats.misses += 1;
+  if (bossHit) state.stats.bossHits += 1;
+  if (miss || scoreDelta < 0) state.stats.combo = 0;
+  else if (hit) state.stats.combo += 1;
+  state.stats.maxCombo = Math.max(state.stats.maxCombo, state.stats.combo);
 }
 
 function updateCustomMolePreview() {
@@ -443,11 +466,8 @@ function updateUploadVisibility() {
 async function handleMoleUpload(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  if (!file.type.startsWith('image/')) {
-    setStatus('請選擇圖片檔。');
-    return;
-  }
-
+  if (!file.type.startsWith('image/')) return setStatus('請選擇圖片檔。');
+  if (file.size > 1024 * 1024) return setStatus('圖片建議小於 1MB，請壓縮後再上傳。');
   try {
     const dataUrl = await resizeImageFile(file, 256);
     state.customMoleDataUrl = dataUrl;
@@ -466,35 +486,22 @@ async function handleMoleUpload(event) {
 async function handleAudioUpload(event, type) {
   const file = event.target.files?.[0];
   if (!file) return;
-  if (!file.type.startsWith('audio/')) {
-    setStatus('請選擇音訊檔。');
-    return;
-  }
-  if (file.size > 700 * 1024) {
-    setStatus('音效檔建議小於 700KB，請先裁短或壓縮後再上傳。');
-    return;
-  }
-
+  if (!file.type.startsWith('audio/')) return setStatus('請選擇音訊檔。');
+  if (file.size > 700 * 1024) return setStatus('音效檔建議小於 700KB，請先裁短或壓縮後再上傳。');
   try {
     const dataUrl = await readFileAsDataUrl(file);
     if (type === 'hit') {
       state.customHitSound = dataUrl;
       localStorage.setItem('wam.customHitSound', dataUrl);
-      els.hitSoundSelect.value = 'custom-hit';
-      localStorage.setItem('wam.hitSoundPreset', 'custom-hit');
-      Sound.setHitPreset('custom-hit');
+      handleHitSoundChoice('custom-hit');
       Sound.setCustomHitSound(dataUrl);
-      syncSoundChoiceButtons();
       setStatus('自訂打中音效已套用。');
       Sound.previewHit();
     } else {
       state.customMissSound = dataUrl;
       localStorage.setItem('wam.customMissSound', dataUrl);
-      els.missSoundSelect.value = 'custom-miss';
-      localStorage.setItem('wam.missSoundPreset', 'custom-miss');
-      Sound.setMissPreset('custom-miss');
+      handleMissSoundChoice('custom-miss');
       Sound.setCustomMissSound(dataUrl);
-      syncSoundChoiceButtons();
       setStatus('自訂沒打中音效已套用。');
       Sound.previewMiss();
     }
@@ -537,16 +544,6 @@ function resizeImageFile(file, maxSize) {
   });
 }
 
-function setActiveMole(index, moleKey = '') {
-  state.currentMole = index;
-  state.currentMoleKey = moleKey;
-  $$('.hole').forEach(hole => {
-    const active = Number(hole.dataset.index) === Number(index);
-    hole.classList.toggle('active', active);
-    if (!active) hole.classList.remove('hit');
-  });
-}
-
 function clearTimers() {
   clearInterval(state.hostTimer);
   clearInterval(state.singleTimer);
@@ -574,111 +571,268 @@ function updateTopbar() {
   els.timeLabel.textContent = seconds;
 }
 
+function updateMissionStrip() {
+  const missionMode = state.room?.missionMode || state.missionMode;
+  if (!missionMode || missionMode === 'classic') {
+    els.missionStrip.hidden = true;
+    els.missionStrip.innerHTML = '';
+    return;
+  }
+
+  els.missionStrip.hidden = false;
+  if (missionMode === 'target') {
+    const target = state.room?.targetScore || state.targetScore || calculateTargetScore({ level: Number(els.levelRange.value), duration: Number(els.durationSelect.value), playerCount: 1, missionMode });
+    const score = state.mode === 'online' ? state.teamScore : state.score;
+    const percent = Math.min(100, Math.round(score / Math.max(1, target) * 100));
+    els.missionStrip.innerHTML = `
+      <div class="mission-info"><strong>限時達標</strong><span>${score} / ${target} 分</span></div>
+      <div class="mission-bar"><span style="width:${percent}%"></span></div>
+    `;
+    return;
+  }
+
+  if (missionMode === 'boss') {
+    const hp = Math.max(0, Number(state.room?.bossHp ?? state.bossHp ?? 0));
+    const maxHp = Math.max(1, Number(state.room?.bossMaxHp ?? state.bossMaxHp ?? 1));
+    const percent = Math.min(100, Math.round(hp / maxHp * 100));
+    els.missionStrip.innerHTML = `
+      <div class="mission-info"><strong>Boss 地鼠</strong><span>HP ${hp} / ${maxHp}</span></div>
+      <div class="mission-bar boss"><span style="width:${percent}%"></span></div>
+    `;
+  }
+}
+
 function setStatus(message) {
   els.statusStrip.textContent = message;
 }
 
 function startSingleGame() {
-  if (state.roomCode) handleLeaveRoom(false);
+  if (state.roomCode) {
+    leaveRoom(state.roomCode).catch(() => {});
+    resetToSingleMode();
+  }
   Sound.start();
   clearTimers();
   state.mode = 'single';
   state.score = 0;
   state.teamScore = 0;
+  state.stats = createStats();
   state.playing = true;
   state.lastHitMoleKey = '';
   state.currentMoleKey = '';
+  state.currentMoleType = 'normal';
+  state.moleSequence = 0;
+  state.missionMode = els.missionModeSelect.value;
   state.moleVisual = getSelectedMoleVisual();
   state.endsAt = now() + Number(els.durationSelect.value) * 1000;
+  state.targetScore = state.missionMode === 'target'
+    ? calculateTargetScore({ level: Number(els.levelRange.value), duration: Number(els.durationSelect.value), playerCount: 1, missionMode: state.missionMode })
+    : 0;
+  state.bossMaxHp = state.missionMode === 'boss' ? calculateBossHp({ level: Number(els.levelRange.value), playerCount: 1 }) : 0;
+  state.bossHp = state.bossMaxHp;
 
   const levelConfig = getLevelConfig(els.levelRange.value);
   buildBoard(levelConfig.boardSize);
   updateTopbar();
-  setStatus(`單人遊戲開始！難度 ${levelConfig.level}。`);
+  updateMissionStrip();
+  setStatus(`單人遊戲開始！黃金 +5、炸彈 -3、愛心 +3 秒。`);
   els.startGameBtn.textContent = '重新開始';
   els.leaveRoomBtn.hidden = true;
 
   const publishLocalMole = () => {
     if (!state.playing) return;
+    if (now() >= state.endsAt) return endSingleGame();
+    if (state.currentMoleType === 'boss' && state.currentMole >= 0 && state.bossHp > 0) return;
+    state.moleSequence += 1;
     const index = pickRandomHole(state.boardSize, state.currentMole);
-    const moleKey = `${Date.now()}-${index}`;
-    setActiveMole(index, moleKey);
+    const type = pickMoleType({ level: Number(els.levelRange.value), missionMode: state.missionMode, sequence: state.moleSequence });
+    const moleKey = `${Date.now()}-${index}-${type.id}`;
+    setActiveMole(index, moleKey, type.id, type.score);
     clearTimeout(state.activeMoleTimer);
-    state.activeMoleTimer = setTimeout(() => {
-      if (state.currentMoleKey === moleKey) setActiveMole(-1, '');
-    }, levelConfig.visibleMs);
+    if (type.id !== 'boss') {
+      state.activeMoleTimer = setTimeout(() => {
+        if (state.currentMoleKey === moleKey) setActiveMole(-1, '', 'normal', 1);
+      }, levelConfig.visibleMs);
+    }
   };
 
   publishLocalMole();
   state.singleTimer = setInterval(publishLocalMole, levelConfig.intervalMs);
   state.clockTimer = setInterval(() => {
     updateTopbar();
+    updateMissionStrip();
+    if (state.missionMode === 'target' && state.targetScore && state.score >= state.targetScore) endSingleGame({ completed: true, reason: 'target' });
+    if (state.missionMode === 'boss' && state.bossMaxHp && state.bossHp <= 0) endSingleGame({ completed: true, reason: 'boss' });
     if (now() >= state.endsAt) endSingleGame();
   }, 180);
 }
 
-function endSingleGame() {
+function endSingleGame(options = {}) {
   if (!state.playing || state.mode !== 'single') return;
   state.playing = false;
   clearTimers();
-  setActiveMole(-1, '');
+  setActiveMole(-1, '', 'normal', 1);
   Sound.end();
-  setStatus(`遊戲結束！你的分數是 ${state.score}。`);
+  const completed = Boolean(options.completed || (state.missionMode === 'target' && state.score >= state.targetScore) || (state.missionMode === 'boss' && state.bossMaxHp && state.bossHp <= 0));
+  const summary = buildResultSummary({
+    title: completed ? '任務成功！' : '遊戲結束',
+    score: state.score,
+    stats: state.stats,
+    missionMode: state.missionMode,
+    targetScore: state.targetScore,
+    bossDefeated: state.bossMaxHp ? state.bossHp <= 0 : false,
+    players: [{ name: getPlayerName(), score: state.score, ...state.stats }],
+    completed
+  });
+  setStatus(`${summary.title} 你的分數是 ${state.score}，命中率 ${summary.accuracy}% ，最高連擊 ${state.stats.maxCombo}。`);
   saveLocalScore({
     name: getPlayerName(),
     score: state.score,
     level: Number(els.levelRange.value),
     duration: Number(els.durationSelect.value),
-    mode: '單人'
+    mode: state.missionMode === 'classic' ? '單人' : `單人・${getMissionLabel(state.missionMode)}`,
+    hits: state.stats.hits,
+    misses: state.stats.misses,
+    maxCombo: state.stats.maxCombo,
+    accuracy: summary.accuracy,
+    grade: summary.grade
   });
   updateLocalLeaderboard();
-  showResult(`你的分數是 ${state.score}`);
+  showResult(summary);
   updateTopbar();
+  updateMissionStrip();
+}
+
+function getCurrentOnlineMoleType() {
+  return getMoleType(state.room?.moleType || state.currentMoleType || 'normal');
+}
+
+function getCurrentOnlineMoleValue() {
+  const type = getCurrentOnlineMoleType();
+  return Number(state.room?.moleValue ?? type.score ?? 1);
 }
 
 function handleHolePress(event) {
   const hole = event.target.closest('.hole');
   if (!hole || !state.playing) return;
+  Sound.unlock();
   const index = Number(hole.dataset.index);
 
   if (index !== state.currentMole || !hole.classList.contains('active')) {
     Sound.miss();
+    vibrate(20);
+    triggerMissEffect(hole);
+    if (state.mode === 'single') updateStatsForLocal({ miss: true });
+    if (state.mode === 'online' && state.roomCode) recordPlayerMiss(state.roomCode).catch(() => {});
+    updateTopbar();
     return;
   }
 
   if (state.mode === 'single') {
-    if (state.lastHitMoleKey === state.currentMoleKey) return;
-    state.lastHitMoleKey = state.currentMoleKey;
-    state.score += 1;
-    hole.classList.add('hit');
-    Sound.hit();
-    updateTopbar();
-    setTimeout(() => hole.classList.remove('active', 'hit'), 140);
+    handleSingleHit(hole);
     return;
   }
 
   if (state.mode === 'online' && state.room?.status === 'playing') {
-    const roomMode = state.room.gameMode || 'coop';
-    if (!state.room.moleKey || state.lastHitMoleKey === state.room.moleKey) return;
-    if (roomMode === 'coop' && state.room.lastHitMoleKey === state.room.moleKey) return;
+    handleOnlineHit(hole).catch(error => setStatus(error.message || '打擊失敗。'));
+  }
+}
 
-    state.lastHitMoleKey = state.room.moleKey;
-    hole.classList.add('hit');
+function handleSingleHit(hole) {
+  const type = getMoleType(state.currentMoleType);
+  if (type.id === 'boss') {
+    if (now() - state.lastBossHitAt < 180) return;
+    state.lastBossHitAt = now();
+    state.bossHp = Math.max(0, state.bossHp - 1);
+    updateStatsForLocal({ scoreDelta: 2, hit: true, bossHit: true });
+    triggerHitEffect(hole, 'boss', state.bossHp <= 0 ? '擊敗!' : '-1HP');
+    Sound.hit();
+    vibrate(28);
+    if (state.bossHp <= 0) {
+      setActiveMole(-1, '', 'normal', 1);
+      setStatus('Boss 地鼠被擊敗了！');
+    }
+    updateTopbar();
+    updateMissionStrip();
+    return;
+  }
 
-    if (roomMode === 'coop') {
-      claimCoopHit({ roomCode: state.roomCode, moleKey: state.room.moleKey })
-        .then(committed => {
-          if (committed) Sound.hit();
-          else Sound.miss();
-        })
-        .catch(error => setStatus(error.message));
+  if (state.lastHitMoleKey === state.currentMoleKey) return;
+  state.lastHitMoleKey = state.currentMoleKey;
+  const isBomb = type.id === 'bomb';
+  const delta = Number(type.score || 1);
+  updateStatsForLocal({ scoreDelta: delta, hit: !isBomb, miss: isBomb });
+  if (type.extraTimeMs) state.endsAt += type.extraTimeMs;
+  triggerHitEffect(hole, type.id, type.pop);
+  if (isBomb) {
+    Sound.miss();
+    vibrate([30, 40, 30]);
+  } else {
+    Sound.hit();
+    vibrate(type.id === 'golden' ? [20, 25, 20] : 18);
+  }
+  setTimeout(() => hole.classList.remove('active', 'hit', 'bad-hit', 'heart-hit'), 160);
+  if (type.id !== 'bomb') setStatus(type.id === 'heart' ? '愛心地鼠！時間 +3 秒。' : type.id === 'golden' ? '黃金地鼠！+5 分。' : '打到了！');
+  else setStatus('打到炸彈了，分數 -3、連擊歸零。');
+  updateTopbar();
+  updateMissionStrip();
+}
+
+async function handleOnlineHit(hole) {
+  const roomMode = state.room.gameMode || 'coop';
+  const type = getCurrentOnlineMoleType();
+  const scoreDelta = getCurrentOnlineMoleValue();
+
+  if (roomMode === 'coop' && type.id === 'boss') {
+    if (now() - state.lastBossHitAt < 220) return;
+    state.lastBossHitAt = now();
+    const result = await claimBossHit({ roomCode: state.roomCode, moleKey: state.room.moleKey });
+    if (!result.committed) return;
+    triggerHitEffect(hole, 'boss', result.defeated ? '擊敗!' : '-1HP');
+    Sound.hit();
+    vibrate(result.defeated ? [40, 60, 40] : 26);
+    if (result.defeated && state.isHost) {
+      await endRoomGame(state.roomCode, { completed: true, reason: 'boss' });
+    }
+    return;
+  }
+
+  if (!state.room.moleKey || state.lastHitMoleKey === state.room.moleKey) return;
+  if (roomMode === 'coop' && state.room.lastHitMoleKey === state.room.moleKey) return;
+
+  state.lastHitMoleKey = state.room.moleKey;
+  triggerHitEffect(hole, type.id, type.pop);
+
+  if (roomMode === 'coop') {
+    const committed = await claimCoopHit({
+      roomCode: state.roomCode,
+      moleKey: state.room.moleKey,
+      moleType: type.id,
+      scoreDelta
+    });
+    if (committed) {
+      if (type.id === 'bomb') {
+        Sound.miss();
+        vibrate([30, 40, 30]);
+      } else {
+        Sound.hit();
+        vibrate(type.id === 'heart' ? [18, 40, 18] : 22);
+      }
+    } else {
+      Sound.miss();
+    }
+  } else {
+    await applyPlayerHit({ roomCode: state.roomCode, moleKey: state.room.moleKey, moleType: type.id, scoreDelta });
+    if (type.id === 'bomb') {
+      Sound.miss();
+      vibrate([30, 40, 30]);
     } else {
       Sound.hit();
-      incrementMyScore(state.roomCode).catch(error => setStatus(error.message));
+      vibrate(22);
     }
-
-    setTimeout(() => hole.classList.remove('hit'), 140);
   }
+
+  setTimeout(() => hole.classList.remove('hit', 'bad-hit', 'heart-hit'), 160);
 }
 
 async function handleCreateRoom() {
@@ -691,10 +845,12 @@ async function handleCreateRoom() {
       theme: els.themeSelect.value,
       duration: Number(els.durationSelect.value),
       gameMode: els.multiplayerModeSelect.value,
+      missionMode: els.missionModeSelect.value,
       moleVisual: state.moleVisual
     });
     await enterOnlineRoom(result.roomCode, result.uid);
-    setStatus(`房間 ${result.roomCode} 已建立。${els.multiplayerModeSelect.value === 'coop' ? '合作模式：大家共同累積同一個分數。' : '競賽模式：每位玩家各自計分。'}`);
+    const modeText = els.multiplayerModeSelect.value === 'coop' ? '合作模式' : '競賽模式';
+    setStatus(`房間 ${result.roomCode} 已建立。${modeText}・${getMissionLabel(els.missionModeSelect.value)}。`);
     Sound.click();
   } catch (error) {
     setStatus(error.message || '建立房間失敗。');
@@ -704,10 +860,7 @@ async function handleCreateRoom() {
 async function handleJoinRoom() {
   try {
     setStatus('正在加入房間...');
-    const result = await joinRoom({
-      roomCode: els.roomCodeInput.value,
-      playerName: getPlayerName()
-    });
+    const result = await joinRoom({ roomCode: els.roomCodeInput.value, playerName: getPlayerName() });
     await enterOnlineRoom(result.roomCode, result.uid);
     setStatus(`已加入房間 ${result.roomCode}。等待房主開始。`);
     Sound.click();
@@ -724,6 +877,7 @@ async function enterOnlineRoom(roomCode, uid) {
   state.uid = uid || await getUid();
   state.score = 0;
   state.teamScore = 0;
+  state.stats = createStats();
   state.playing = false;
   state.endedDialogKey = '';
   els.leaveRoomBtn.hidden = false;
@@ -732,7 +886,6 @@ async function enterOnlineRoom(roomCode, uid) {
   updateTopbar();
   updateRoomShare({ roomCode, expiresAt: now() + ROOM_TTL_MS });
   startPresence(roomCode);
-
   state.roomUnsubscribe = await subscribeRoom(roomCode, handleRoomUpdate);
 }
 
@@ -745,45 +898,59 @@ function handleRoomUpdate(room) {
 
   state.room = room;
   state.isHost = room.hostId === state.uid;
-  state.score = Number(room.players?.[state.uid]?.score || 0);
+  const me = room.players?.[state.uid] || {};
+  state.score = Number(me.score || 0);
+  state.stats = {
+    hits: Number(me.hits || 0),
+    misses: Number(me.misses || 0),
+    combo: Number(me.combo || 0),
+    maxCombo: Number(me.maxCombo || 0),
+    bossHits: Number(me.bossHits || 0)
+  };
   state.teamScore = Number(room.teamScore || 0);
+  state.targetScore = Number(room.targetScore || 0);
+  state.bossHp = Number(room.bossHp || 0);
+  state.bossMaxHp = Number(room.bossMaxHp || 0);
   state.multiplayerMode = room.gameMode || 'coop';
+  state.missionMode = room.missionMode || 'classic';
   updateRoomShare(room);
 
   if (room.moleVisual) {
     state.moleVisual = room.moleVisual;
     applyMoleVisual();
   }
-
   if (room.theme && document.body.dataset.theme !== room.theme) {
     document.body.dataset.theme = room.theme;
     els.themeSelect.value = room.theme;
   }
-
   if (room.level) {
     els.levelRange.value = room.level;
     updateLevelUi();
   }
-
   if (room.duration) els.durationSelect.value = String(room.duration);
   if (room.gameMode) els.multiplayerModeSelect.value = room.gameMode;
+  if (room.missionMode) els.missionModeSelect.value = room.missionMode;
   if (room.boardSize && room.boardSize !== state.boardSize) buildBoard(room.boardSize);
+  updateMissionUi();
 
   renderRoomLeaderboard(Object.entries(room.players || {}).map(([uid, player]) => ({ uid, ...player })), room.gameMode || 'coop');
 
   if (room.status === 'playing') {
     state.playing = true;
     state.endsAt = Number(room.endsAt || 0);
-    const hitAlready = room.gameMode === 'coop' && room.lastHitMoleKey && room.lastHitMoleKey === room.moleKey;
-    setActiveMole(hitAlready ? -1 : Number(room.currentMole ?? -1), hitAlready ? '' : room.moleKey || '');
+    const type = getMoleType(room.moleType || 'normal');
+    const hitAlready = room.gameMode === 'coop' && type.id !== 'boss' && room.lastHitMoleKey && room.lastHitMoleKey === room.moleKey;
+    setActiveMole(hitAlready ? -1 : Number(room.currentMole ?? -1), hitAlready ? '' : room.moleKey || '', type.id, room.moleValue || type.score);
     updateOnlineClock(room);
     if (state.isHost) startHostMoleLoop(room);
     els.startGameBtn.textContent = state.isHost ? '重新開始多人遊戲' : '等待房主';
     els.startGameBtn.disabled = !state.isHost;
-    if (room.gameMode === 'coop') {
-      setStatus(state.isHost ? '合作模式進行中。大家一起打同一批地鼠，共同累積合作分數。' : '合作模式進行中！大家一起打，同一隻地鼠先打到的人幫全隊加分。');
-    } else {
-      setStatus(state.isHost ? '競賽模式進行中。每位玩家各自計分。' : '競賽模式進行中！看到地鼠就點。');
+    setOnlineStatus(room);
+    if (state.isHost && room.gameMode === 'coop' && room.missionMode === 'target' && room.targetScore && state.teamScore >= Number(room.targetScore)) {
+      endRoomGame(state.roomCode, { completed: true, reason: 'target' }).catch(() => {});
+    }
+    if (state.isHost && room.gameMode === 'coop' && room.missionMode === 'boss' && Number(room.bossHp || 0) <= 0 && Number(room.bossMaxHp || 0) > 0) {
+      endRoomGame(state.roomCode, { completed: true, reason: 'boss' }).catch(() => {});
     }
   } else {
     clearInterval(state.hostTimer);
@@ -791,20 +958,29 @@ function handleRoomUpdate(room) {
     state.hostTimer = null;
     state.clockTimer = null;
     state.playing = false;
-    setActiveMole(-1, '');
+    setActiveMole(-1, '', 'normal', 1);
     els.startGameBtn.disabled = !state.isHost && room.status !== 'waiting';
     els.startGameBtn.textContent = state.isHost ? '開始多人遊戲' : '等待房主';
 
     if (room.status === 'ended') {
-      const dialogKey = `${state.roomCode}-${room.endsAt || room.updatedAt || 'ended'}`;
-      const resultMessage = room.gameMode === 'coop'
-        ? `合作分數是 ${state.teamScore}，你的貢獻是 ${state.score}`
-        : `你的分數是 ${state.score}`;
-      setStatus(`多人遊戲結束！${resultMessage}。`);
+      const dialogKey = `${state.roomCode}-${room.endsAt || room.updatedAt || 'ended'}-${room.completed ? '1' : '0'}`;
+      const players = Object.entries(room.players || {}).map(([uid, player]) => ({ uid, ...player }));
+      const summary = buildResultSummary({
+        title: room.completed ? '任務成功！' : '多人遊戲結束',
+        score: room.gameMode === 'coop' ? state.teamScore : state.score,
+        stats: room.gameMode === 'coop' ? sumStats(players) : state.stats,
+        missionMode: room.missionMode || 'classic',
+        targetScore: Number(room.targetScore || 0),
+        bossDefeated: Boolean(Number(room.bossHp || 0) <= 0 && Number(room.bossMaxHp || 0) > 0 || room.endReason === 'boss'),
+        players,
+        completed: Boolean(room.completed),
+        roomMode: room.gameMode || 'coop'
+      });
+      setStatus(`${summary.title} ${room.gameMode === 'coop' ? `團隊分數 ${state.teamScore}` : `你的分數 ${state.score}`}，評級 ${summary.grade}。`);
       if (dialogKey !== state.endedDialogKey) {
         state.endedDialogKey = dialogKey;
         Sound.end();
-        showResult(resultMessage);
+        showResult(summary);
       }
     } else {
       setStatus(state.isHost ? `房間 ${state.roomCode} 等待中。分享房號，按開始一起玩。` : `已在房間 ${state.roomCode}，等待房主開始。`);
@@ -812,6 +988,19 @@ function handleRoomUpdate(room) {
   }
 
   updateTopbar();
+  updateMissionStrip();
+}
+
+function setOnlineStatus(room) {
+  const type = getMoleType(room.moleType || 'normal');
+  if (type.id === 'boss') {
+    setStatus(`Boss 地鼠出現！大家連打削減 HP，目前 ${Number(room.bossHp || 0)} / ${Number(room.bossMaxHp || 1)}。`);
+    return;
+  }
+  const missionText = getMissionLabel(room.missionMode || 'classic');
+  const specialText = type.id === 'normal' ? '' : ` 特殊地鼠：${type.label}。`;
+  if (room.gameMode === 'coop') setStatus(`${missionText}進行中，大家共同累積合作分數。${specialText}`);
+  else setStatus(`競賽模式進行中，每位玩家各自計分。${specialText}`);
 }
 
 function startHostMoleLoop(room) {
@@ -820,17 +1009,43 @@ function startHostMoleLoop(room) {
 
   const publishNext = () => {
     if (!state.room || state.room.status !== 'playing') return;
+    if (state.room.gameMode === 'coop' && state.room.missionMode === 'target' && Number(state.room.targetScore || 0) > 0 && Number(state.room.teamScore || 0) >= Number(state.room.targetScore || 0)) {
+      clearInterval(state.hostTimer);
+      state.hostTimer = null;
+      endRoomGame(state.roomCode, { completed: true, reason: 'target' }).catch(error => setStatus(error.message));
+      return;
+    }
+    if (state.room.gameMode === 'coop' && state.room.missionMode === 'boss' && Number(state.room.bossHp || 0) <= 0 && Number(state.room.bossMaxHp || 0) > 0) {
+      clearInterval(state.hostTimer);
+      state.hostTimer = null;
+      endRoomGame(state.roomCode, { completed: true, reason: 'boss' }).catch(error => setStatus(error.message));
+      return;
+    }
     if (now() >= Number(state.room.endsAt || 0)) {
       clearInterval(state.hostTimer);
       state.hostTimer = null;
-      endRoomGame(state.roomCode).catch(error => setStatus(error.message));
+      const completed = state.room.gameMode === 'coop' && state.room.missionMode === 'target' && Number(state.room.teamScore || 0) >= Number(state.room.targetScore || 0);
+      endRoomGame(state.roomCode, { completed, reason: completed ? 'target' : 'time' }).catch(error => setStatus(error.message));
       return;
     }
+    if (state.room.moleType === 'boss' && Number(state.room.bossHp || 0) > 0 && Number(state.room.currentMole ?? -1) >= 0) return;
+
+    const sequence = Number(state.room.moleSequence || 0) + 1;
+    let type = pickMoleType({ level: Number(state.room.level || 1), missionMode: state.room.missionMode || 'classic', sequence });
+    if (state.room.gameMode !== 'coop' && type.id === 'boss') type = getMoleType('normal');
+    if (state.room.missionMode !== 'boss' && type.id === 'boss') type = getMoleType('normal');
+    if (state.room.missionMode === 'boss' && Number(state.room.bossHp || 0) <= 0 && type.id === 'boss') type = getMoleType('normal');
+
     const index = pickRandomHole(Number(state.room.boardSize || config.boardSize), Number(state.room.currentMole ?? -1));
     publishMole({
       roomCode: state.roomCode,
       index,
-      moleKey: `${Date.now()}-${index}`
+      moleKey: `${Date.now()}-${index}-${type.id}`,
+      moleType: type.id,
+      moleValue: type.score,
+      moleSequence: sequence,
+      bossHp: type.id === 'boss' ? Number(state.room.bossHp || state.room.bossMaxHp || 1) : 0,
+      bossMaxHp: type.id === 'boss' ? Number(state.room.bossMaxHp || 1) : 0
     }).catch(error => setStatus(error.message));
   };
 
@@ -847,18 +1062,17 @@ function updateOnlineClock(room) {
   state.endsAt = Number(room.endsAt || 0);
   state.clockTimer = setInterval(() => {
     updateTopbar();
+    updateMissionStrip();
     if (state.isHost && state.playing && now() >= state.endsAt) {
       clearInterval(state.clockTimer);
-      endRoomGame(state.roomCode).catch(error => setStatus(error.message));
+      const completed = state.room?.gameMode === 'coop' && state.room?.missionMode === 'target' && Number(state.room?.teamScore || 0) >= Number(state.room?.targetScore || 0);
+      endRoomGame(state.roomCode, { completed, reason: completed ? 'target' : 'time' }).catch(error => setStatus(error.message));
     }
   }, 200);
 }
 
 async function handleOnlineStart() {
-  if (!state.roomCode || !state.isHost) {
-    setStatus('只有房主可以開始多人遊戲。');
-    return;
-  }
+  if (!state.roomCode || !state.isHost) return setStatus('只有房主可以開始多人遊戲。');
   try {
     Sound.start();
     state.moleVisual = getSelectedMoleVisual();
@@ -868,6 +1082,7 @@ async function handleOnlineStart() {
       theme: els.themeSelect.value,
       duration: Number(els.durationSelect.value),
       gameMode: els.multiplayerModeSelect.value,
+      missionMode: els.missionModeSelect.value,
       moleVisual: state.moleVisual
     });
   } catch (error) {
@@ -897,6 +1112,7 @@ function resetToSingleMode() {
   state.roomUnsubscribe = null;
   state.score = 0;
   state.teamScore = 0;
+  state.stats = createStats();
   state.playing = false;
   state.moleVisual = getSelectedMoleVisual();
   els.leaveRoomBtn.hidden = true;
@@ -906,30 +1122,116 @@ function resetToSingleMode() {
   buildBoard(getLevelConfig(els.levelRange.value).boardSize);
   renderRoomLeaderboard([]);
   updateTopbar();
+  updateMissionStrip();
 }
 
-function showResult(message) {
-  els.resultText.textContent = message;
+function showResult(summary) {
+  if (typeof summary === 'string') {
+    els.resultTitle.textContent = '遊戲結束';
+    els.resultText.textContent = summary;
+  } else {
+    els.resultTitle.textContent = summary.title;
+    els.resultText.innerHTML = resultMarkup(summary);
+  }
   if (typeof els.resultDialog.showModal === 'function') els.resultDialog.showModal();
-  else alert(message);
+  else alert(typeof summary === 'string' ? summary : `${summary.title}\n分數：${summary.score}\n評級：${summary.grade}`);
+}
+
+function buildResultSummary({ title, score, stats, missionMode, targetScore = 0, bossDefeated = false, players = [], completed = false, roomMode = 'single' }) {
+  const totalAttempts = Number(stats.hits || 0) + Number(stats.misses || 0);
+  const accuracy = totalAttempts ? Math.round(Number(stats.hits || 0) / totalAttempts * 100) : 0;
+  const mvp = getMvp(players);
+  const grade = calculateGrade({ score, accuracy, maxCombo: stats.maxCombo || 0, missionMode, completed, targetScore });
+  return {
+    title,
+    score,
+    stats,
+    accuracy,
+    grade,
+    missionMode,
+    targetScore,
+    bossDefeated,
+    mvp,
+    players,
+    completed,
+    roomMode
+  };
+}
+
+function resultMarkup(summary) {
+  const mission = getMissionLabel(summary.missionMode);
+  const mvpLine = summary.mvp ? `<p><strong>MVP：</strong>${escapeHtml(summary.mvp.name)}，${Number(summary.mvp.score || 0)} 分，最高連擊 ${Number(summary.mvp.maxCombo || 0)}</p>` : '';
+  const missionLine = summary.missionMode === 'target'
+    ? `<p><strong>任務：</strong>${escapeHtml(mission)}・${summary.completed ? '達標成功' : `未達標，目標 ${summary.targetScore}`}</p>`
+    : summary.missionMode === 'boss'
+      ? `<p><strong>任務：</strong>${escapeHtml(mission)}・${summary.bossDefeated ? 'Boss 已擊敗' : 'Boss 尚未擊敗'}</p>`
+      : `<p><strong>模式：</strong>${escapeHtml(mission)}</p>`;
+  const playerRows = summary.players?.length
+    ? `<div class="result-player-list">${summary.players
+        .slice()
+        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+        .slice(0, 8)
+        .map((player, index) => `<div><span>${index + 1}. ${escapeHtml(player.name || '玩家')}</span><strong>${Number(player.score || 0)}</strong></div>`)
+        .join('')}</div>`
+    : '';
+
+  return `
+    <div class="result-grade">${escapeHtml(summary.grade)}</div>
+    ${missionLine}
+    <div class="result-stats-grid">
+      <div><span>總分</span><strong>${Number(summary.score || 0)}</strong></div>
+      <div><span>命中率</span><strong>${summary.accuracy}%</strong></div>
+      <div><span>最高連擊</span><strong>${Number(summary.stats.maxCombo || 0)}</strong></div>
+      <div><span>Boss 命中</span><strong>${Number(summary.stats.bossHits || 0)}</strong></div>
+    </div>
+    <p><strong>命中 / 失誤：</strong>${Number(summary.stats.hits || 0)} / ${Number(summary.stats.misses || 0)}</p>
+    ${mvpLine}
+    ${playerRows}
+  `;
+}
+
+function getMvp(players) {
+  const sorted = (players || [])
+    .filter(player => player && player.name)
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.maxCombo || 0) - Number(a.maxCombo || 0));
+  return sorted[0] || null;
+}
+
+function calculateGrade({ score, accuracy, maxCombo, missionMode, completed, targetScore }) {
+  let points = 0;
+  points += Math.min(45, Math.round(Number(score || 0) * 1.4));
+  points += Math.min(30, Math.round(Number(accuracy || 0) * 0.3));
+  points += Math.min(20, Number(maxCombo || 0) * 2);
+  if (missionMode !== 'classic' && completed) points += 18;
+  if (missionMode === 'target' && targetScore && score >= targetScore) points += 8;
+  if (points >= 105) return 'S+';
+  if (points >= 90) return 'S';
+  if (points >= 75) return 'A';
+  if (points >= 58) return 'B';
+  if (points >= 40) return 'C';
+  return 'D';
+}
+
+function sumStats(players) {
+  return (players || []).reduce((acc, player) => {
+    acc.hits += Number(player.hits || 0);
+    acc.misses += Number(player.misses || 0);
+    acc.maxCombo = Math.max(acc.maxCombo, Number(player.maxCombo || 0));
+    acc.bossHits += Number(player.bossHits || 0);
+    return acc;
+  }, createStats());
 }
 
 function saveLocalScore(record) {
   const scores = getLocalScores();
-  scores.push({
-    ...record,
-    date: new Date().toISOString()
-  });
+  scores.push({ ...record, date: new Date().toISOString() });
   scores.sort((a, b) => b.score - a.score || b.level - a.level);
   localStorage.setItem('wam.localScores', JSON.stringify(scores.slice(0, 10)));
 }
 
 function getLocalScores() {
-  try {
-    return JSON.parse(localStorage.getItem('wam.localScores') || '[]');
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem('wam.localScores') || '[]'); }
+  catch { return []; }
 }
 
 function updateLocalLeaderboard() {
@@ -941,28 +1243,28 @@ function updateLocalLeaderboard() {
   els.localLeaderboard.innerHTML = scores.map((item, index) => `
     <li>
       <span class="rank">${index + 1}</span>
-      <span>${escapeHtml(item.name)}<br><small>${escapeHtml(item.mode || '單人')}・難度 ${item.level}・${item.duration} 秒</small></span>
+      <span>${escapeHtml(item.name)}<br><small>${escapeHtml(item.mode || '單人')}・難度 ${item.level}・${item.duration} 秒・命中率 ${item.accuracy ?? 0}%・${item.grade || '-'}</small></span>
       <strong>${item.score}</strong>
     </li>
   `).join('');
 }
 
 function renderRoomLeaderboard(players, roomMode = 'coop') {
-  const list = players
-    .filter(player => player && player.name)
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-
+  const list = players.filter(player => player && player.name).sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
   if (!list.length) {
     els.roomLeaderboard.innerHTML = '<li class="empty">多人房間建立後會顯示玩家資訊。</li>';
     return;
   }
-
   const scoreLabel = roomMode === 'coop' ? '貢獻' : '分數';
+  const mission = state.room?.missionMode || 'classic';
+  const missionHeader = mission !== 'classic'
+    ? `<li class="team-score-row mission-row"><span>${mission === 'boss' ? '👑' : '🎯'}</span><span>${escapeHtml(getMissionLabel(mission))}${mission === 'target' ? `<br><small>目標 ${Number(state.room?.targetScore || 0)} 分</small>` : mission === 'boss' ? `<br><small>Boss HP ${Number(state.room?.bossHp || 0)} / ${Number(state.room?.bossMaxHp || 0)}</small>` : ''}</span><strong>${state.room?.completed ? '成功' : '進行'}</strong></li>`
+    : '';
   const teamHeader = roomMode === 'coop'
     ? `<li class="team-score-row"><span>🤝</span><span>團隊合作分數</span><strong>${state.teamScore}</strong></li>`
     : '';
 
-  els.roomLeaderboard.innerHTML = teamHeader + list.map((player, index) => {
+  els.roomLeaderboard.innerHTML = missionHeader + teamHeader + list.map((player, index) => {
     const lastSeen = Number(player.lastSeen || 0);
     const recentlySeen = lastSeen > 0 && now() - lastSeen < 45_000;
     const online = Boolean(player.active) && recentlySeen;
@@ -970,20 +1272,22 @@ function renderRoomLeaderboard(players, roomMode = 'coop') {
     return `
       <li class="${online ? 'online-player' : 'offline-player'}">
         <span class="rank">${index + 1}</span>
-        <span>${escapeHtml(player.name)}${player.uid === state.uid ? '（你）' : ''}<br><small><span class="presence-dot"></span>${presenceText}・${scoreLabel}</small></span>
+        <span>${escapeHtml(player.name)}${player.uid === state.uid ? '（你）' : ''}<br><small><span class="presence-dot"></span>${presenceText}・${scoreLabel}・命中 ${Number(player.hits || 0)}・連擊 ${Number(player.maxCombo || 0)}</small></span>
         <strong>${Number(player.score || 0)}</strong>
       </li>
     `;
   }).join('');
 }
 
+function getMissionLabel(missionMode) {
+  return (MISSION_MODES.find(item => item.id === missionMode) || MISSION_MODES[0]).label;
+}
+
 function startPresence(roomCode) {
   stopPresence();
   touchMyPresence(roomCode).catch(() => {});
   state.presenceTimer = setInterval(() => {
-    if (state.mode === 'online' && state.roomCode) {
-      touchMyPresence(state.roomCode).catch(() => {});
-    }
+    if (state.mode === 'online' && state.roomCode) touchMyPresence(state.roomCode).catch(() => {});
   }, 20_000);
 }
 
@@ -1000,7 +1304,6 @@ function updateRoomShare(room) {
     els.roomShareCard.hidden = true;
     return;
   }
-
   els.roomShareCard.hidden = false;
   els.shareRoomCode.textContent = roomCode;
   const url = getInviteUrl(roomCode);
@@ -1010,18 +1313,11 @@ function updateRoomShare(room) {
 
   const updateExpiryText = () => {
     const expiresAt = Number(room?.expiresAt || 0);
-    if (!expiresAt) {
-      els.roomExpiryLabel.textContent = '房間建立後會自動過期。';
-      return;
-    }
+    if (!expiresAt) return els.roomExpiryLabel.textContent = '房間建立後會自動過期。';
     const remaining = expiresAt - now();
-    if (remaining <= 0) {
-      els.roomExpiryLabel.textContent = '房間已過期，請重新建立。';
-      return;
-    }
+    if (remaining <= 0) return els.roomExpiryLabel.textContent = '房間已過期，請重新建立。';
     els.roomExpiryLabel.textContent = `房間約 ${formatTimeLeft(remaining)} 後自動過期，開始遊戲會重新延長。`;
   };
-
   updateExpiryText();
   clearInterval(state.expiryTimer);
   state.expiryTimer = setInterval(updateExpiryText, 30_000);
@@ -1051,18 +1347,12 @@ function renderRoomQrCode(url) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
   if (window.QRCode?.toCanvas) {
-    window.QRCode.toCanvas(canvas, url, {
-      width: 176,
-      margin: 1,
-      errorCorrectionLevel: 'M'
-    }, error => {
+    window.QRCode.toCanvas(canvas, url, { width: 176, margin: 1, errorCorrectionLevel: 'M' }, error => {
       if (error) drawQrFallback(canvas);
     });
     return;
   }
-
   drawQrFallback(canvas);
   setTimeout(() => {
     if (state.roomCode && window.QRCode?.toCanvas) renderRoomQrCode(url);
@@ -1079,6 +1369,44 @@ function drawQrFallback(canvas) {
   ctx.fillText('QR 載入中', canvas.width / 2, 78);
   ctx.font = '12px sans-serif';
   ctx.fillText('也可直接複製邀請連結', canvas.width / 2, 104);
+}
+
+function setupInviteFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const room = String(params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  if (!room) return;
+  els.roomCodeInput.value = room;
+  setStatus(`已從邀請連結帶入房號 ${room}，輸入暱稱後按「加入」。`);
+  $('#multiplayerPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function setupPwaInstall() {
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    state.deferredInstallPrompt = event;
+    els.installPwaBtn.hidden = false;
+    els.pwaHint.textContent = '可安裝囉！按下按鈕後選擇安裝即可。';
+  });
+  window.addEventListener('appinstalled', () => {
+    state.deferredInstallPrompt = null;
+    els.installPwaBtn.hidden = true;
+    els.pwaHint.textContent = '已安裝完成，可從桌面開啟「鼠叔出沒」。';
+  });
+}
+
+async function installPwa() {
+  if (!state.deferredInstallPrompt) return setStatus('目前瀏覽器尚未提供安裝按鈕。iPhone 請用 Safari 分享 → 加到主畫面。');
+  state.deferredInstallPrompt.prompt();
+  await state.deferredInstallPrompt.userChoice.catch(() => null);
+  state.deferredInstallPrompt = null;
+  els.installPwaBtn.hidden = true;
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+  });
 }
 
 function formatTimeLeft(ms) {
@@ -1106,12 +1434,7 @@ function switchLeaderboardTab(tabName) {
 }
 
 function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 }
 
 function escapeAttribute(value) {

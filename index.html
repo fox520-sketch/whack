@@ -20,7 +20,7 @@
       <div class="hero-copy">
         <p class="eyebrow">鼠叔出沒</p>
         <h1>鼠叔出沒</h1>
-        <p class="subtitle">單人練反應，多人可選合作共分或競賽計分。支援電腦、平板、手機觸控、自訂圖案與自訂音效。</p>
+        <p class="subtitle">單人練反應，多人可選合作共分或競賽計分。支援電腦、平板、手機觸控、自訂圖案、自訂音效、特殊地鼠與合作任務。</p>
         <div class="hero-actions">
           <button class="primary" id="singleQuickStart">單人快速開始</button>
           <button class="ghost" id="scrollToMultiplayer">多人房間</button>
@@ -28,7 +28,7 @@
       </div>
       <div class="hero-mascot" aria-hidden="true">
         <div class="wave-orb">🐹</div>
-        <div class="mini-badge">合作模式新增</div>
+        <div class="mini-badge">v5 任務模式</div>
       </div>
     </section>
 
@@ -55,6 +55,12 @@
             <option value="60">60 秒</option>
             <option value="90">90 秒</option>
           </select>
+        </label>
+
+        <label class="field">
+          <span>任務模式</span>
+          <select id="missionModeSelect"></select>
+          <small id="missionHint">一般模式：自由打地鼠，結束後統計分數與命中率。</small>
         </label>
 
         <label class="field">
@@ -178,6 +184,7 @@
         </div>
 
         <div class="status-strip" id="statusStrip">準備好了嗎？選擇設定後開始遊戲。</div>
+        <div class="mission-strip" id="missionStrip" hidden></div>
 
         <div class="ocean-board" id="gameBoard" aria-label="打地鼠遊戲區"></div>
 
@@ -202,13 +209,14 @@
     <button class="hole" type="button" aria-label="地鼠洞">
       <span class="splash"></span>
       <span class="mole">🐹</span>
+      <span class="mole-badge"></span>
       <span class="hit-pop">+1</span>
     </button>
   </template>
 
-  <dialog id="resultDialog" class="result-dialog">
-    <h2>遊戲結束</h2>
-    <p id="resultText">你的分數是 0</p>
+  <dialog id="resultDialog" class="result-dialog result-dialog-wide">
+    <h2 id="resultTitle">遊戲結束</h2>
+    <div id="resultText" class="result-content">你的分數是 0</div>
     <button id="closeResultBtn" class="primary">知道了</button>
   </dialog>
 
