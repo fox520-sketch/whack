@@ -1324,8 +1324,9 @@ function updateRoomShare(room) {
 }
 
 function getInviteUrl(roomCode) {
-  const url = new URL(window.location.href);
+  const url = new URL(window.location.origin + window.location.pathname);
   url.hash = '';
+  url.search = '';
   url.searchParams.set('room', roomCode);
   return url.toString();
 }
@@ -1364,12 +1365,13 @@ function drawQrFallback(canvas) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 16px sans-serif';
+  ctx.font = 'bold 15px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('QR 載入中', canvas.width / 2, 78);
+  ctx.fillText('QR 產生失敗', canvas.width / 2, 76);
   ctx.font = '12px sans-serif';
-  ctx.fillText('也可直接複製邀請連結', canvas.width / 2, 104);
+  ctx.fillText('請使用邀請連結或房號', canvas.width / 2, 104);
 }
+
 
 function setupInviteFromUrl() {
   const params = new URLSearchParams(window.location.search);
